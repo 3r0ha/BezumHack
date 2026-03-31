@@ -1,0 +1,73 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Project {
+  id          String        @id @default(uuid())
+  title       String
+  description String?
+  status      ProjectStatus @default(DRAFT)
+  clientId    String
+  managerId   String?
+  deadline    DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  tasks       Task[]
+}
+
+model Task {
+  id             String     @id @default(uuid())
+  title          String
+  description    String?
+  status         TaskStatus @default(BACKLOG)
+  priority       Priority   @default(MEDIUM)
+  assigneeId     String?
+  projectId      String
+  project        Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  estimatedHours Float?
+  dueDate        DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  // Dependencies
+  blockedBy TaskDependency[] @relation("BlockedTask")
+  blocks    TaskDependency[] @relation("BlockingTask")
+}
+
+model TaskDependency {
+  id             String @id @default(uuid())
+  blockedTaskId  String
+  blockingTaskId String
+  blockedTask    Task   @relation("BlockedTask", fields: [blockedTaskId], references: [id], onDelete: Cascade)
+  blockingTask   Task   @relation("BlockingTask", fields: [blockingTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([blockedTaskId, blockingTaskId])
+}

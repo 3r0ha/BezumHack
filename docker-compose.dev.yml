@@ -1,0 +1,78 @@
+version: '3.8'
+
+# Development overrides — run with:
+# docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  gateway:
+    ports:
+      - "80:80"
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/tailwind.config.ts:/app/tailwind.config.ts
+      - ./frontend/postcss.config.js:/app/postcss.config.js
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost
+      - WATCHPACK_POLLING=true
+
+  auth:
+    build:
+      context: ./services/auth
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./services/auth/src:/app/src
+      - ./services/auth/prisma:/app/prisma
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:-platform_secret}@postgres:5432/auth_db
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+
+  projects:
+    build:
+      context: ./services/projects
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./services/projects/src:/app/src
+      - ./services/projects/prisma:/app/prisma
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:-platform_secret}@postgres:5432/projects_db
+      AUTH_SERVICE_URL: http://auth:3001
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+
+  chat:
+    build:
+      context: ./services/chat
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./services/chat/src:/app/src
+      - ./services/chat/prisma:/app/prisma
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:-platform_secret}@postgres:5432/chat_db
+      AUTH_SERVICE_URL: http://auth:3001
+      AI_SERVICE_URL: http://ai:3004
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+
+  ai:
+    build:
+      context: ./services/ai
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./services/ai/src:/app/src
+    environment:
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-4-20250514}
