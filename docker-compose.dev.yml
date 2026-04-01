@@ -7,14 +7,9 @@ services:
   gateway:
     ports:
       - "80:80"
-
-  postgres:
-    ports:
-      - "5432:5432"
-
-  redis:
-    ports:
-      - "6379:6379"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
 
   frontend:
     build:
@@ -26,7 +21,7 @@ services:
       - ./frontend/tailwind.config.ts:/app/tailwind.config.ts
       - ./frontend/postcss.config.js:/app/postcss.config.js
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost
+      - NEXT_PUBLIC_API_URL=
       - WATCHPACK_POLLING=true
 
   auth:
@@ -52,6 +47,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:-platform_secret}@postgres:5432/projects_db
       AUTH_SERVICE_URL: http://auth:3001
+      AI_SERVICE_URL: http://ai:3004
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
 
   chat:
@@ -61,10 +58,12 @@ services:
     volumes:
       - ./services/chat/src:/app/src
       - ./services/chat/prisma:/app/prisma
+      - chat_uploads:/app/uploads
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:-platform_secret}@postgres:5432/chat_db
       AUTH_SERVICE_URL: http://auth:3001
       AI_SERVICE_URL: http://ai:3004
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
 
   ai:
@@ -76,3 +75,15 @@ services:
     environment:
       AI_API_KEY: ${AI_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-sonnet-4-20250514}
+
+  notifications:
+    build:
+      context: ./services/notifications
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./services/notifications/src:/app/src
+      - ./services/notifications/prisma:/app/prisma
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:-platform_secret}@postgres:5432/notifications_db
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}

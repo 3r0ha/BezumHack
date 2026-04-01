@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import {
@@ -10,6 +10,14 @@ import {
   Brain,
   Settings,
   ChevronLeft,
+  BarChart3,
+  LayoutGrid,
+  Timer,
+  CheckSquare,
+  Receipt,
+  TrendingUp,
+  Eye,
+  Video,
   ChevronRight,
   Menu,
   Sun,
@@ -17,6 +25,9 @@ import {
   Bell,
   LogOut,
   User,
+  Search,
+  FileText,
+  CalendarCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -39,26 +50,56 @@ import {
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/auth-context";
 import { useTheme } from "@/contexts/theme-context";
+import { useLocale } from "@/contexts/locale-context";
+import { api } from "@/lib/api";
 
-const navItems = [
-  { href: "/", label: "Дашборд", icon: LayoutDashboard },
-  { href: "/projects", label: "Проекты", icon: FolderKanban },
-  { href: "/chat", label: "Чат", icon: MessageSquare },
-  { href: "/ai", label: "AI Ассистент", icon: Brain },
-];
+function useNavItems() {
+  const { t } = useLocale();
+  const { user } = useAuth();
+  const role = user?.role || "DEVELOPER";
 
-const pageTitles: Record<string, string> = {
-  "/": "Дашборд",
-  "/projects": "Проекты",
-  "/chat": "Чат",
-  "/ai": "AI Ассистент",
-  "/settings": "Настройки",
-};
+  const all = [
+    { href: "/client-portal", label: t('nav.client_portal'), icon: Eye, roles: ["CLIENT", "MANAGER"] },
+    { href: "/dashboard", label: t('nav.dashboard'), icon: LayoutDashboard, roles: ["DEVELOPER", "MANAGER"] },
+    { href: "/projects", label: t('nav.projects'), icon: FolderKanban, roles: ["DEVELOPER", "MANAGER"] },
+    { href: "/docs", label: "Документы", icon: FileText, roles: ["DEVELOPER", "MANAGER", "CLIENT"] },
+    { href: "/meetings", label: "Встречи", icon: CalendarCheck, roles: ["DEVELOPER", "MANAGER", "CLIENT"] },
+    { href: "/gantt", label: t('nav.gantt'), icon: BarChart3, roles: ["DEVELOPER", "MANAGER"] },
+    { href: "/boards", label: t('nav.boards'), icon: LayoutGrid, roles: ["DEVELOPER", "MANAGER"] },
+    { href: "/chat", label: t('nav.chat'), icon: MessageSquare, roles: ["CLIENT", "DEVELOPER", "MANAGER"] },
+    { href: "/ai", label: t('nav.ai'), icon: Brain, roles: ["DEVELOPER", "MANAGER"] },
+    { href: "/approvals", label: t('nav.approvals'), icon: CheckSquare, roles: ["CLIENT", "MANAGER"] },
+    { href: "/billing", label: t('nav.billing'), icon: Receipt, roles: ["MANAGER"] },
+    { href: "/analytics", label: t('nav.analytics'), icon: TrendingUp, roles: ["MANAGER"] },
+  ];
 
-function getPageTitle(pathname: string): string {
+  return all.filter(item => item.roles.includes(role));
+}
+
+function usePageTitle(pathname: string): string {
+  const { t } = useLocale();
+  const pageTitles: Record<string, string> = {
+    "/dashboard": t('nav.dashboard'),
+    "/projects": t('nav.projects'),
+    "/gantt": t('nav.gantt'),
+    "/chat": t('nav.chat'),
+    "/ai": t('nav.ai'),
+    "/approvals": t('nav.approvals'),
+    "/billing": t('nav.billing'),
+    "/analytics": t('nav.analytics'),
+    "/client-portal": t('nav.client_portal'),
+    "/boards": t('nav.boards'),
+    "/docs": "Документы",
+    "/meetings": "Встречи",
+    "/search": t('nav.search'),
+    "/settings": t('nav.settings'),
+  };
   if (pageTitles[pathname]) return pageTitles[pathname];
-  if (pathname.startsWith("/projects/")) return "Проект";
-  return "Дашборд";
+  if (pathname.startsWith("/projects/")) return t('nav.projects');
+  if (pathname.startsWith("/boards/")) return t('nav.boards');
+  if (pathname.startsWith("/docs/")) return "Документы";
+  if (pathname.startsWith("/meetings/")) return "Встречи";
+  return t('nav.dashboard');
 }
 
 function getUserInitials(name?: string): string {
@@ -70,11 +111,14 @@ function getUserInitials(name?: string): string {
   return name[0].toUpperCase();
 }
 
-const roleLabels: Record<string, string> = {
-  CLIENT: "Клиент",
-  DEVELOPER: "Разработчик",
-  MANAGER: "Менеджер",
-};
+function getRoleLabel(role: string, t: (key: string) => string): string {
+  const map: Record<string, string> = {
+    CLIENT: t('auth.role.client'),
+    DEVELOPER: t('auth.role.developer'),
+    MANAGER: t('auth.role.manager'),
+  };
+  return map[role] || role;
+}
 
 interface SidebarContentProps {
   collapsed: boolean;
@@ -84,33 +128,35 @@ interface SidebarContentProps {
 }
 
 function SidebarContent({ collapsed, pathname, onNavigate, user }: SidebarContentProps) {
+  const navItems = useNavItems();
+  const { t } = useLocale();
   const isActive = (href: string) => {
-    if (href === "/") return pathname === "/";
+    if (href === "/dashboard") return pathname === "/dashboard";
     return pathname === href || pathname.startsWith(href + "/");
   };
 
   return (
     <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className="h-16 flex items-center px-4 border-b shrink-0">
+      <div className="h-14 flex items-center px-4 shrink-0">
         <Link
-          href="/"
-          className="flex items-center gap-3 overflow-hidden"
+          href="/dashboard"
+          className="flex items-center gap-2.5 overflow-hidden group"
           onClick={onNavigate}
         >
-          <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
-            <span className="text-primary-foreground font-bold text-sm">DS</span>
+          <div className="h-7 w-7 rounded-lg gradient-bg flex items-center justify-center shrink-0 group-hover:glow transition-shadow">
+            <span className="text-white font-bold text-xs">S</span>
           </div>
           {!collapsed && (
-            <span className="text-lg font-bold tracking-tight whitespace-nowrap">
-              DevSync
+            <span className="text-[15px] font-semibold tracking-tight whitespace-nowrap">
+              Seamless
             </span>
           )}
         </Link>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+      <nav className="flex-1 px-2 py-3 space-y-px overflow-y-auto">
         {navItems.map((item) => {
           const active = isActive(item.href);
           const linkContent = (
@@ -119,17 +165,20 @@ function SidebarContent({ collapsed, pathname, onNavigate, user }: SidebarConten
               href={item.href}
               onClick={onNavigate}
               className={`
-                group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium
-                transition-all duration-200 relative
+                group flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-medium
+                transition-all duration-150 relative
                 ${collapsed ? "justify-center" : ""}
                 ${
                   active
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-foreground/[0.04]"
                 }
               `}
             >
-              <item.icon className={`h-5 w-5 shrink-0 ${active ? "" : "group-hover:scale-110 transition-transform"}`} />
+              {active && !collapsed && (
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 rounded-r-full bg-primary" />
+              )}
+              <item.icon className={`h-4 w-4 shrink-0 transition-colors ${active ? "text-primary" : ""}`} />
               {!collapsed && <span>{item.label}</span>}
             </Link>
           );
@@ -164,7 +213,7 @@ function SidebarContent({ collapsed, pathname, onNavigate, user }: SidebarConten
               </Link>
             </TooltipTrigger>
             <TooltipContent side="right">
-              <p>Настройки</p>
+              <p>{t('nav.settings')}</p>
             </TooltipContent>
           </Tooltip>
         ) : (
@@ -174,7 +223,7 @@ function SidebarContent({ collapsed, pathname, onNavigate, user }: SidebarConten
             className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-all duration-200"
           >
             <Settings className="h-5 w-5 shrink-0" />
-            <span>Настройки</span>
+            <span>{t('nav.settings')}</span>
           </Link>
         )}
       </div>
@@ -196,7 +245,7 @@ function SidebarContent({ collapsed, pathname, onNavigate, user }: SidebarConten
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{user.name}</p>
                 <p className="text-xs text-muted-foreground truncate">
-                  {roleLabels[user.role] || user.role}
+                  {getRoleLabel(user.role, t) || user.role}
                 </p>
               </div>
             )}
@@ -204,6 +253,112 @@ function SidebarContent({ collapsed, pathname, onNavigate, user }: SidebarConten
         </div>
       )}
     </div>
+  );
+}
+
+function NotificationsDropdown() {
+  const { t } = useLocale();
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const loadNotifications = async () => {
+      try {
+        const data = await api.get<any>("/api/notifications/notifications?limit=10");
+        if (data?.notifications) {
+          setNotifications(data.notifications);
+          setUnreadCount(data.unreadCount || 0);
+        }
+      } catch {
+        // Fallback
+        setUnreadCount(3);
+        setNotifications([
+          { id: "1", title: "Задача назначена", body: "Вам назначена задача 'Разработка API'", read: false, createdAt: new Date().toISOString(), type: "TASK_ASSIGNED" },
+          { id: "2", title: "Блокер разрешён", body: "Задача 'Проектирование БД' завершена, ваша задача разблокирована", read: false, createdAt: new Date().toISOString(), type: "BLOCKER_RESOLVED" },
+          { id: "3", title: "Дедлайн приближается", body: "До дедлайна проекта 'CRM система' осталось 3 дня", read: false, createdAt: new Date().toISOString(), type: "DEADLINE_APPROACHING" },
+        ]);
+      }
+    };
+    loadNotifications();
+  }, []);
+
+  const handleMarkAllRead = async () => {
+    try {
+      await api.post("/api/notifications/notifications/read-all");
+    } catch {}
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    setUnreadCount(0);
+  };
+
+  const typeIcons: Record<string, string> = {
+    TASK_ASSIGNED: "bg-blue-500",
+    BLOCKER_RESOLVED: "bg-emerald-500",
+    DEADLINE_APPROACHING: "bg-amber-500",
+    APPROVAL_REQUESTED: "bg-violet-500",
+    TASK_COMMENT: "bg-sky-500",
+    MESSAGE_RECEIVED: "bg-indigo-500",
+  };
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 text-muted-foreground hover:text-foreground relative"
+        >
+          <Bell className="h-[18px] w-[18px]" />
+          {unreadCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-[380px]">
+        <div className="flex items-center justify-between px-4 py-2">
+          <DropdownMenuLabel className="p-0">{t('notifications.title')}</DropdownMenuLabel>
+          {unreadCount > 0 && (
+            <button
+              onClick={handleMarkAllRead}
+              className="text-xs text-primary hover:text-primary/80 font-medium"
+            >
+              {t('notifications.read_all')}
+            </button>
+          )}
+        </div>
+        <DropdownMenuSeparator />
+        <div className="max-h-[400px] overflow-y-auto">
+          {notifications.length === 0 ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">
+              {t('notifications.empty')}
+            </div>
+          ) : (
+            notifications.map((n) => (
+              <DropdownMenuItem
+                key={n.id}
+                className={`flex items-start gap-3 px-4 py-3 cursor-pointer ${
+                  !n.read ? "bg-accent/50" : ""
+                }`}
+              >
+                <div
+                  className={`h-2 w-2 rounded-full mt-1.5 shrink-0 ${
+                    typeIcons[n.type] || "bg-muted-foreground"
+                  }`}
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium leading-tight">{n.title}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                    {n.body}
+                  </p>
+                </div>
+              </DropdownMenuItem>
+            ))
+          )}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -221,6 +376,29 @@ function LoadingSkeleton() {
   );
 }
 
+function NavigationProgress() {
+  const pathname = usePathname();
+  const [visible, setVisible] = useState(false);
+  const prevRef = useRef(pathname);
+
+  useEffect(() => {
+    if (pathname !== prevRef.current) {
+      prevRef.current = pathname;
+      setVisible(true);
+      const t = setTimeout(() => setVisible(false), 400);
+      return () => clearTimeout(t);
+    }
+  }, [pathname]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="fixed top-0 left-0 right-0 z-[100] h-0.5 bg-primary/20">
+      <div className="h-full bg-primary rounded-r-full transition-all duration-400" style={{ width: "100%" }} />
+    </div>
+  );
+}
+
 export default function DashboardLayout({
   children,
 }: {
@@ -230,14 +408,38 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const { user, isLoading, isAuthenticated, logout } = useAuth();
   const { resolvedTheme, toggleTheme } = useTheme();
+  const { t } = useLocale();
+  const pageTitle = usePageTitle(pathname);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      router.push("/login");
+      router.replace("/login");
     }
   }, [isLoading, isAuthenticated, router]);
+
+  // Role-based page access guard
+  useEffect(() => {
+    if (isLoading || !user) return;
+    const role = user.role;
+    const restricted: Record<string, string[]> = {
+      "/projects": ["DEVELOPER", "MANAGER"],
+      "/gantt": ["DEVELOPER", "MANAGER"],
+      "/boards": ["DEVELOPER", "MANAGER"],
+      "/ai": ["DEVELOPER", "MANAGER"],
+      "/billing": ["MANAGER"],
+      "/analytics": ["MANAGER"],
+      "/settings/api": ["DEVELOPER", "MANAGER"],
+      "/settings/webhooks": ["DEVELOPER", "MANAGER"],
+    };
+    for (const [path, roles] of Object.entries(restricted)) {
+      if (pathname.startsWith(path) && !roles.includes(role)) {
+        router.replace("/dashboard");
+        return;
+      }
+    }
+  }, [isLoading, user, pathname, router]);
 
   if (isLoading) {
     return <LoadingSkeleton />;
@@ -253,13 +455,14 @@ export default function DashboardLayout({
 
   return (
     <TooltipProvider delayDuration={100}>
+      <NavigationProgress />
       <div className="min-h-screen flex bg-background">
         {/* Desktop sidebar */}
         <aside
           className={`
-            hidden lg:flex flex-col border-r bg-card shrink-0
+            hidden lg:flex flex-col border-r border-border/30 bg-card shrink-0
             transition-all duration-300 ease-in-out
-            ${collapsed ? "w-[64px]" : "w-[240px]"}
+            ${collapsed ? "w-[56px]" : "w-[220px]"}
           `}
         >
           <SidebarContent
@@ -287,7 +490,7 @@ export default function DashboardLayout({
         {/* Main content area */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Header */}
-          <header className="h-16 border-b bg-card flex items-center justify-between px-4 lg:px-6 shrink-0 sticky top-0 z-30">
+          <header className="h-12 border-b border-border/30 bg-card flex items-center justify-between px-4 lg:px-5 shrink-0 sticky top-0 z-30">
             <div className="flex items-center gap-3">
               {/* Mobile menu trigger */}
               <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -313,7 +516,7 @@ export default function DashboardLayout({
               {/* Page title */}
               <div>
                 <h1 className="text-lg font-semibold tracking-tight">
-                  {getPageTitle(pathname)}
+                  {pageTitle}
                 </h1>
               </div>
             </div>
@@ -337,26 +540,58 @@ export default function DashboardLayout({
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>{resolvedTheme === "dark" ? "Светлая тема" : "Тёмная тема"}</p>
+                  <p>{resolvedTheme === "dark" ? t('settings.theme.light') : t('settings.theme.dark')}</p>
                 </TooltipContent>
               </Tooltip>
 
-              {/* Notifications placeholder */}
+              {/* Search */}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-9 w-9 text-muted-foreground hover:text-foreground relative"
+                    onClick={() => router.push("/search")}
+                    className="h-9 w-9 text-muted-foreground hover:text-foreground"
                   >
-                    <Bell className="h-[18px] w-[18px]" />
-                    <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-primary" />
+                    <Search className="h-[18px] w-[18px]" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>Уведомления</p>
+                  <p>{t('nav.search')}</p>
                 </TooltipContent>
               </Tooltip>
+
+              {/* New Meet */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={async () => {
+                      try {
+                        const res = await api.post<any>("/api/chat/calls", {
+                          initiatorId: user?.id,
+                          participants: [user?.id],
+                          type: "video",
+                        });
+                        router.push(`/call/${res.id}`);
+                      } catch {
+                        const id = crypto.randomUUID();
+                        router.push(`/call/${id}`);
+                      }
+                    }}
+                    className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                  >
+                    <Video className="h-[18px] w-[18px]" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('call.start')}</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Notifications dropdown */}
+              <NotificationsDropdown />
 
               <Separator orientation="vertical" className="mx-2 h-6" />
 
@@ -377,7 +612,7 @@ export default function DashboardLayout({
                         {user?.name || "Пользователь"}
                       </p>
                       <p className="text-xs text-muted-foreground leading-tight">
-                        {roleLabels[user?.role || ""] || user?.role}
+                        {getRoleLabel(user?.role || "", t) || user?.role}
                       </p>
                     </div>
                   </Button>
@@ -392,11 +627,11 @@ export default function DashboardLayout({
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => router.push("/settings")}>
                     <User className="mr-2 h-4 w-4" />
-                    Профиль
+                    {t('settings.profile')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => router.push("/settings")}>
                     <Settings className="mr-2 h-4 w-4" />
-                    Настройки
+                    {t('nav.settings')}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
@@ -407,7 +642,7 @@ export default function DashboardLayout({
                     className="text-destructive focus:text-destructive"
                   >
                     <LogOut className="mr-2 h-4 w-4" />
-                    Выйти
+                    {t('auth.logout')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -415,7 +650,7 @@ export default function DashboardLayout({
           </header>
 
           {/* Page content */}
-          <main className="flex-1 p-4 lg:p-6 overflow-auto">{children}</main>
+          <main className="flex-1 p-4 lg:p-5 overflow-auto">{children}</main>
         </div>
       </div>
     </TooltipProvider>

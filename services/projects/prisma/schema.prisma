@@ -30,6 +30,40 @@ enum Priority {
   CRITICAL
 }
 
+enum EpochStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum DocumentVisibility {
+  PUBLIC
+  TEAM
+  MANAGERS_ONLY
+}
+
+enum DocumentStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  ARCHIVED
+}
+
+enum MeetingStatus {
+  SCHEDULING
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ReleaseStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+}
+
 model Project {
   id          String        @id @default(uuid())
   title       String
@@ -41,6 +75,32 @@ model Project {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
   tasks       Task[]
+  approvals   Approval[]
+  invoices    Invoice[]
+  webhooks    Webhook[]
+  boards      Board[]
+  epochs      Epoch[]
+  documents   Document[]
+  meetings    Meeting[]
+  hourlyRate  Float?
+}
+
+model Epoch {
+  id          String      @id @default(uuid())
+  title       String
+  description String?
+  projectId   String
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  startDate   DateTime
+  endDate     DateTime
+  status      EpochStatus @default(PLANNED)
+  goals       String[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  tasks       Task[]
+  documents   Document[]
+  meetings    Meeting[]
+  releases    Release[]
 }
 
 model Task {
@@ -52,10 +112,21 @@ model Task {
   assigneeId     String?
   projectId      String
   project        Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  epochId        String?
+  epoch          Epoch?     @relation(fields: [epochId], references: [id])
   estimatedHours Float?
   dueDate        DateTime?
+  gitBranch      String?
+  prNumber       String?
+  prStatus       String?
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
+
+  comments      Comment[]
+  timeEntries   TimeEntry[]
+  actualHours   Float?
+  documentRefs  TaskDocumentRef[]
+  meetings      Meeting[]
 
   // Dependencies
   blockedBy TaskDependency[] @relation("BlockedTask")
@@ -70,4 +141,257 @@ model TaskDependency {
   blockingTask   Task   @relation("BlockingTask", fields: [blockingTaskId], references: [id], onDelete: Cascade)
 
   @@unique([blockedTaskId, blockingTaskId])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+  userId    String
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TimeEntry {
+  id        String    @id @default(uuid())
+  taskId    String
+  task      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  startedAt DateTime
+  stoppedAt DateTime?
+  hours     Float?
+  note      String?
+  createdAt DateTime  @default(now())
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Approval {
+  id            String         @id @default(uuid())
+  projectId     String
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  status        ApprovalStatus @default(PENDING)
+  requestedBy   String
+  reviewedBy    String?
+  reviewComment String?
+  reviewedAt    DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Invoice {
+  id          String        @id @default(uuid())
+  projectId   String
+  project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number      String        @unique
+  totalAmount Float
+  status      InvoiceStatus @default(DRAFT)
+  issuedAt    DateTime?
+  paidAt      DateTime?
+  items       InvoiceItem[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model InvoiceItem {
+  id          String  @id @default(uuid())
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  hours       Float
+  rate        Float
+  amount      Float
+  taskId      String?
+}
+
+model Webhook {
+  id              String    @id @default(uuid())
+  userId          String
+  projectId       String?
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  url             String
+  secret          String
+  events          String[]
+  active          Boolean   @default(true)
+  lastError       String?
+  lastTriggeredAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  action     String
+  entityType String
+  entityId   String
+  details    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId, createdAt])
+}
+
+model Board {
+  id        String         @id @default(uuid())
+  title     String
+  projectId String?
+  project   Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdBy String
+  isPublic  Boolean        @default(false)
+  thumbnail String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  elements  BoardElement[]
+}
+
+model BoardElement {
+  id         String   @id @default(uuid())
+  boardId    String
+  board      Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  type       String
+  x          Float    @default(0)
+  y          Float    @default(0)
+  width      Float    @default(200)
+  height     Float    @default(200)
+  rotation   Float    @default(0)
+  content    String?
+  color      String   @default("#fef08a")
+  fontSize   Int      @default(14)
+  properties Json?
+  zIndex     Int      @default(0)
+  createdBy  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// ─── Docs-core ────────────────────────────────────────────────────────────────
+
+model Document {
+  id         String             @id @default(uuid())
+  title      String
+  content    Json
+  status     DocumentStatus     @default(DRAFT)
+  visibility DocumentVisibility @default(PUBLIC)
+  projectId  String
+  project    Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  epochId    String?
+  epoch      Epoch?             @relation(fields: [epochId], references: [id])
+  createdBy  String
+  updatedBy  String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  versions   DocumentVersion[]
+  taskRefs   TaskDocumentRef[]
+  meetings   MeetingDocument[]
+}
+
+model DocumentVersion {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version    Int
+  title      String
+  content    Json
+  changelog  String?
+  createdBy  String
+  meetingId  String?
+  createdAt  DateTime @default(now())
+
+  @@unique([documentId, version])
+}
+
+// Cross-reference: task ↔ document (with optional quote for inline citation)
+model TaskDocumentRef {
+  id         String   @id @default(uuid())
+  taskId     String
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  quote      String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@unique([taskId, documentId])
+}
+
+// ─── Meeting (Kanban-core enhanced) ───────────────────────────────────────────
+
+model Meeting {
+  id              String          @id @default(uuid())
+  title           String
+  projectId       String
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  epochId         String?
+  epoch           Epoch?          @relation(fields: [epochId], references: [id])
+  taskId          String?
+  task            Task?           @relation(fields: [taskId], references: [id])
+  organizerId     String
+  status          MeetingStatus   @default(SCHEDULING)
+  scheduledAt     DateTime?
+  duration        Int?
+  nextcloudRoomId String?
+  recordingUrl    String?
+  transcription   String?
+  summary         String?
+  participants    String[]
+  slots           MeetingSlot[]
+  documents       MeetingDocument[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+// Proposed time slots for bidirectional scheduling
+model MeetingSlot {
+  id        String   @id @default(uuid())
+  meetingId String
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  startTime DateTime
+  endTime   DateTime
+  votes     String[]
+}
+
+// Many-to-many: meeting ↔ document
+model MeetingDocument {
+  id         String   @id @default(uuid())
+  meetingId  String
+  meeting    Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([meetingId, documentId])
+}
+
+// ─── Release (end of Epoch pipeline) ─────────────────────────────────────────
+
+model Release {
+  id         String        @id @default(uuid())
+  epochId    String
+  epoch      Epoch         @relation(fields: [epochId], references: [id], onDelete: Cascade)
+  title      String
+  version    String
+  notes      String?
+  status     ReleaseStatus @default(DRAFT)
+  gitTag     String?
+  releasedAt DateTime?
+  createdBy  String
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
 }

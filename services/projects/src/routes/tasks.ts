@@ -1,6 +1,9 @@
 import { Router, Request, Response, NextFunction } from "express";
 import prisma from "../prisma";
 import { createTaskSchema, updateTaskSchema } from "../validators";
+import { publishNotification } from "../index";
+import { dispatchWebhookEvent } from './webhooks';
+import { logAudit } from './audit';
 
 export const tasksRouter = Router();
 
@@ -37,6 +40,8 @@ tasksRouter.post("/", asyncHandler(async (req: Request, res: Response): Promise<
     return;
   }
 
+  const { epochId, gitBranch, prNumber } = req.body;
+
   const task = await prisma.task.create({
     data: {
       title,
@@ -46,6 +51,9 @@ tasksRouter.post("/", asyncHandler(async (req: Request, res: Response): Promise<
       assigneeId,
       estimatedHours,
       dueDate: dueDate ? new Date(dueDate) : undefined,
+      epochId: epochId || null,
+      gitBranch: gitBranch || null,
+      prNumber: prNumber || null,
       ...(dependsOn && dependsOn.length > 0
         ? {
             blockedBy: {
@@ -59,8 +67,25 @@ tasksRouter.post("/", asyncHandler(async (req: Request, res: Response): Promise<
     include: {
       blockedBy: { include: { blockingTask: true } },
       blocks: { include: { blockedTask: true } },
+      documentRefs: { include: { document: { select: { id: true, title: true, status: true } } } },
+      epoch: { select: { id: true, title: true } },
     },
   });
+
+  // Notify assignee
+  if (task.assigneeId) {
+    publishNotification(req.app, {
+      userId: task.assigneeId,
+      type: 'TASK_ASSIGNED',
+      title: 'Новая задача',
+      body: `Вам назначена задача "${task.title}"`,
+      link: `/projects/${task.projectId}`,
+    });
+  }
+
+  dispatchWebhookEvent('task.created', task.projectId, { task: { id: task.id, title: task.title, status: task.status, priority: task.priority } });
+
+  logAudit({ userId: (req as any).user?.userId || '', action: 'task.created', entityType: 'task', entityId: task.id, details: { title: task.title, projectId: task.projectId } });
 
   res.status(201).json(task);
 }));
@@ -101,6 +126,8 @@ tasksRouter.patch("/:id", asyncHandler(async (req: Request, res: Response): Prom
     }
   }
 
+  const { epochId, gitBranch, prNumber, prStatus } = req.body;
+
   const data: Record<string, unknown> = {};
   if (title !== undefined) data.title = title;
   if (description !== undefined) data.description = description;
@@ -109,6 +136,10 @@ tasksRouter.patch("/:id", asyncHandler(async (req: Request, res: Response): Prom
   if (assigneeId !== undefined) data.assigneeId = assigneeId;
   if (estimatedHours !== undefined) data.estimatedHours = estimatedHours;
   if (dueDate !== undefined) data.dueDate = dueDate ? new Date(dueDate) : null;
+  if (epochId !== undefined) data.epochId = epochId;
+  if (gitBranch !== undefined) data.gitBranch = gitBranch;
+  if (prNumber !== undefined) data.prNumber = prNumber;
+  if (prStatus !== undefined) data.prStatus = prStatus;
 
   const task = await prisma.task.update({
     where: { id: req.params.id },
@@ -116,8 +147,45 @@ tasksRouter.patch("/:id", asyncHandler(async (req: Request, res: Response): Prom
     include: {
       blockedBy: { include: { blockingTask: true } },
       blocks: { include: { blockedTask: true } },
+      documentRefs: { include: { document: { select: { id: true, title: true, status: true } } } },
+      epoch: { select: { id: true, title: true } },
     },
   });
+
+  // Notify on status change
+  if (status && status !== existing.status && task.assigneeId) {
+    publishNotification(req.app, {
+      userId: task.assigneeId,
+      type: 'TASK_STATUS_CHANGED',
+      title: 'Статус задачи изменён',
+      body: `Задача "${task.title}" → ${status}`,
+      link: `/projects/${task.projectId}`,
+    });
+  }
+
+  if (status) {
+    dispatchWebhookEvent('task.status_changed', task.projectId, { task: { id: task.id, title: task.title, oldStatus: existing.status, newStatus: status } });
+    if (status === 'DONE') {
+      dispatchWebhookEvent('task.completed', task.projectId, { task: { id: task.id, title: task.title } });
+    }
+    logAudit({ userId: (req as any).user?.userId || '', action: 'task.status_changed', entityType: 'task', entityId: task.id, details: { oldStatus: existing.status, newStatus: status } });
+  }
+
+  // Notify blocked tasks when this one is DONE
+  if (status === 'DONE' && task.blocks) {
+    for (const dep of task.blocks) {
+      if (dep.blockedTask && dep.blockedTask.assigneeId) {
+        publishNotification(req.app, {
+          userId: dep.blockedTask.assigneeId,
+          type: 'BLOCKER_RESOLVED',
+          title: 'Блокер разрешён',
+          body: `Задача "${task.title}" завершена — ваша задача "${dep.blockedTask.title}" разблокирована`,
+          link: `/projects/${task.projectId}`,
+          priority: 'HIGH',
+        });
+      }
+    }
+  }
 
   res.json(task);
 }));
@@ -298,3 +366,30 @@ async function detectCycle(startTaskId: string, targetTaskId: string): Promise<b
 
   return false;
 }
+
+// GET /:id/documents — get documents linked to a task
+tasksRouter.get("/:id/documents", asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const refs = await prisma.taskDocumentRef.findMany({
+    where: { taskId: req.params.id },
+    include: {
+      document: {
+        include: {
+          versions: { orderBy: { version: 'desc' }, take: 1, select: { version: true, createdAt: true } },
+          epoch: { select: { id: true, title: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+  res.json(refs);
+}));
+
+// GET /:id/meetings — get meetings linked to a task
+tasksRouter.get("/:id/meetings", asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const meetings = await prisma.meeting.findMany({
+    where: { taskId: req.params.id },
+    include: { slots: { orderBy: { startTime: 'asc' } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json(meetings);
+}));
