@@ -21,6 +21,8 @@ tasksRouter.get("/project/:projectId", asyncHandler(async (req: Request, res: Re
     include: {
       blockedBy: { include: { blockingTask: true } },
       blocks: { include: { blockedTask: true } },
+      documentRefs: { select: { id: true, documentId: true, quote: true } },
+      epoch: { select: { id: true, title: true } },
     },
     orderBy: { createdAt: "asc" },
   });

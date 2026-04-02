@@ -1,5 +1,5 @@
 {
-  "name": "hackathon-platform-frontend",
+  "name": "envelope-frontend",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -17,15 +17,16 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "socket.io-client": "^4.7.4",
-    "tailwind-merge": "^2.2.1"
+    "tailwind-merge": "^2.2.1",
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/react": "^18.2.0",
+    "@types/node": "20.19.37",
+    "@types/react": "18.3.28",
     "@types/react-dom": "^18.2.0",
     "autoprefixer": "^10.4.17",
     "postcss": "^8.4.33",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5.3.3"
+    "typescript": "5.9.3"
   }
 }

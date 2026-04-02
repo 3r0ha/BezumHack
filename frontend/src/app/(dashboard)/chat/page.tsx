@@ -1,1249 +1,1423 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   Search,
   SendHorizontal,
-  Languages,
-  Copy,
-  Reply,
-  Paperclip,
-  Brain,
   Plus,
   ArrowLeft,
-  Info,
-  Check,
   MessageSquare,
-  ChevronRight,
+  Users,
+  Loader2,
+  Languages,
+  Info,
+  UserPlus,
+  LogOut,
+  Mail,
+  Paperclip,
+  Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
-import { io, Socket } from "socket.io-client";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/auth-context";
+import { useLocale } from "@/contexts/locale-context";
+import { useSocket } from "@/hooks/use-socket";
+import { useUsers, type UserInfo } from "@/hooks/use-users";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────────────────────────
 
-interface Participant {
+interface Conversation {
   id: string;
-  name: string;
-  role: "CLIENT" | "DEVELOPER" | "MANAGER";
-  online?: boolean;
+  projectId: string;
+  title: string | null;
+  participants: { id: string; userId: string }[];
+  messages?: { id: string; content: string; senderId: string; createdAt: string }[];
+  updatedAt: string;
+  createdAt?: string;
+  unreadCount?: number;
 }
 
 interface Message {
   id: string;
-  sender_id: string;
-  sender_name: string;
+  conversationId: string;
+  senderId: string;
   content: string;
-  timestamp: string;
-  date: string;
-  translation?: string;
-  isTranslating?: boolean;
+  createdAt: string;
 }
 
-interface Conversation {
+interface ProjectOption {
   id: string;
   title: string;
-  project_name: string;
-  project_id: string;
-  last_message: string;
-  last_message_time: string;
-  last_message_date: string;
-  unread: number;
-  participants: Participant[];
-  avatar_color: string;
 }
 
-// ─── Constants ──────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || "http://localhost:8000";
-const CURRENT_USER_ID = "me";
-
-const AVATAR_COLORS = [
-  "bg-blue-500",
-  "bg-emerald-500",
-  "bg-violet-500",
-  "bg-amber-500",
-  "bg-rose-500",
-  "bg-cyan-500",
-  "bg-indigo-500",
-  "bg-pink-500",
-];
-
-// ─── Utilities ──────────────────────────────────────────────────────────────
-
-function getInitials(name: string): string {
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+function getUserInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name[0]?.toUpperCase() || "?";
 }
 
-function formatRelativeDate(dateStr: string): string {
-  const today = new Date();
-  const date = new Date(dateStr);
-  const todayStr = today.toISOString().split("T")[0];
-  const yesterdayDate = new Date(today);
-  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-  const yesterdayStr = yesterdayDate.toISOString().split("T")[0];
-
-  if (dateStr === todayStr) return "Сегодня";
-  if (dateStr === yesterdayStr) return "Вчера";
-  return new Date(dateStr).toLocaleDateString("ru-RU", {
-    day: "numeric",
-    month: "long",
-    year:
-      new Date(dateStr).getFullYear() !== today.getFullYear()
-        ? "numeric"
-        : undefined,
-  });
-}
-
-function groupMessagesByDate(
-  messages: Message[]
-): { date: string; label: string; messages: Message[] }[] {
-  const groups: Record<string, Message[]> = {};
-  for (const msg of messages) {
-    if (!groups[msg.date]) groups[msg.date] = [];
-    groups[msg.date].push(msg);
+function formatTime(dateStr: string, locale: string = "ru"): string {
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleTimeString(locale === "en" ? "en-US" : "ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
   }
-  return Object.entries(groups).map(([date, msgs]) => ({
-    date,
-    label: formatRelativeDate(date),
-    messages: msgs,
-  }));
 }
 
-// ─── Mock Data ──────────────────────────────────────────────────────────────
-
-const TODAY = new Date().toISOString().split("T")[0];
-const YESTERDAY = (() => {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split("T")[0];
-})();
-
-const MOCK_CONVERSATIONS: Conversation[] = [
-  {
-    id: "c1",
-    title: "Обсуждение функционала",
-    project_name: "Мобильное приложение",
-    project_id: "p1",
-    last_message: "Конечно, обновлю к завтрашнему дню",
-    last_message_time: "14:23",
-    last_message_date: TODAY,
-    unread: 3,
-    participants: [
-      { id: "u1", name: "Иван Петров", role: "CLIENT", online: true },
-      { id: "u2", name: "Анна Сидорова", role: "DEVELOPER", online: true },
-      { id: CURRENT_USER_ID, name: "Вы", role: "DEVELOPER", online: true },
-    ],
-    avatar_color: AVATAR_COLORS[0],
-  },
-  {
-    id: "c2",
-    title: "Ревью дизайна",
-    project_name: "Веб-портал",
-    project_id: "p2",
-    last_message: "Жду ваши правки по цветовой палитре",
-    last_message_time: "11:45",
-    last_message_date: TODAY,
-    unread: 1,
-    participants: [
-      { id: "u3", name: "Мария Козлова", role: "CLIENT", online: false },
-      { id: "u4", name: "Дмитрий Волков", role: "MANAGER", online: true },
-      { id: CURRENT_USER_ID, name: "Вы", role: "DEVELOPER", online: true },
-    ],
-    avatar_color: AVATAR_COLORS[2],
-  },
-  {
-    id: "c3",
-    title: "Техническое задание",
-    project_name: "API Интеграция",
-    project_id: "p3",
-    last_message: "Документация по эндпоинтам готова",
-    last_message_time: "09:12",
-    last_message_date: YESTERDAY,
-    unread: 0,
-    participants: [
-      { id: "u5", name: "Алексей Новиков", role: "DEVELOPER", online: false },
-      { id: CURRENT_USER_ID, name: "Вы", role: "DEVELOPER", online: true },
-    ],
-    avatar_color: AVATAR_COLORS[4],
-  },
-];
-
-const MOCK_MESSAGES: Record<string, Message[]> = {
-  c1: [
-    {
-      id: "m1",
-      sender_id: "u1",
-      sender_name: "Иван Петров",
-      content:
-        "Добрый день! Хотел обсудить функционал мобильного приложения. Есть несколько важных моментов.",
-      timestamp: "09:15",
-      date: YESTERDAY,
-    },
-    {
-      id: "m2",
-      sender_id: CURRENT_USER_ID,
-      sender_name: "Вы",
-      content:
-        "Здравствуйте, Иван! Конечно, готов обсудить. Что именно вас интересует?",
-      timestamp: "09:22",
-      date: YESTERDAY,
-    },
-    {
-      id: "m3",
-      sender_id: "u1",
-      sender_name: "Иван Петров",
-      content:
-        "Нам нужна авторизация через социальные сети, push-уведомления и офлайн-режим. Это реально в текущие сроки?",
-      timestamp: "09:30",
-      date: YESTERDAY,
-    },
-    {
-      id: "m4",
-      sender_id: "u2",
-      sender_name: "Анна Сидорова",
-      content:
-        "Авторизация и пуши -- без проблем. Офлайн-режим потребует дополнительную неделю, нужно реализовать локальное кеширование данных.",
-      timestamp: "09:45",
-      date: YESTERDAY,
-    },
-    {
-      id: "m5",
-      sender_id: "u1",
-      sender_name: "Иван Петров",
-      content: "Понял. Давайте тогда офлайн-режим во вторую итерацию вынесем.",
-      timestamp: "10:00",
-      date: YESTERDAY,
-    },
-    {
-      id: "m6",
-      sender_id: CURRENT_USER_ID,
-      sender_name: "Вы",
-      content:
-        "Хорошее решение. Я подготовлю обновленный план на первый спринт без офлайна.",
-      timestamp: "10:12",
-      date: YESTERDAY,
-    },
-    {
-      id: "m7",
-      sender_id: "u1",
-      sender_name: "Иван Петров",
-      content:
-        "Добрый день! Готов макет главной страницы, можете посмотреть? Отправил ссылку на Figma.",
-      timestamp: "13:40",
-      date: TODAY,
-    },
-    {
-      id: "m8",
-      sender_id: CURRENT_USER_ID,
-      sender_name: "Вы",
-      content:
-        "Отлично, мне нравится направление! Можно сделать кнопку входа чуть крупнее? И навигацию снизу как в стандартных приложениях.",
-      timestamp: "13:55",
-      date: TODAY,
-    },
-    {
-      id: "m9",
-      sender_id: "u2",
-      sender_name: "Анна Сидорова",
-      content:
-        "Согласна по навигации. Ещё предлагаю добавить анимацию перехода между экранами -- это сильно улучшит UX.",
-      timestamp: "14:10",
-      date: TODAY,
-    },
-    {
-      id: "m10",
-      sender_id: "u1",
-      sender_name: "Иван Петров",
-      content: "Конечно, обновлю к завтрашнему дню. Спасибо за обратную связь!",
-      timestamp: "14:23",
-      date: TODAY,
-    },
-  ],
-  c2: [
-    {
-      id: "m20",
-      sender_id: "u3",
-      sender_name: "Мария Козлова",
-      content:
-        "Привет всем! Посмотрела текущую версию дизайна портала. В целом хорошо, но есть замечания.",
-      timestamp: "10:00",
-      date: TODAY,
-    },
-    {
-      id: "m21",
-      sender_id: CURRENT_USER_ID,
-      sender_name: "Вы",
-      content:
-        "Добрый день, Мария! Будем рады услышать ваши замечания. Что нужно скорректировать?",
-      timestamp: "10:15",
-      date: TODAY,
-    },
-    {
-      id: "m22",
-      sender_id: "u3",
-      sender_name: "Мария Козлова",
-      content:
-        "Шрифты на главной -- отлично. Но цветовая палитра слишком холодная для нашего бренда. Нужно добавить теплые акценты. И ещё: таблица на странице отчётов слишком плотная, нужно больше воздуха.",
-      timestamp: "10:30",
-      date: TODAY,
-    },
-    {
-      id: "m23",
-      sender_id: "u4",
-      sender_name: "Дмитрий Волков",
-      content:
-        "Мария, спасибо за детальный фидбек. Мы обновим палитру и пришлём варианты к пятнице. По таблице -- увеличим межстрочный интервал и добавим зебра-стайл.",
-      timestamp: "11:20",
-      date: TODAY,
-    },
-    {
-      id: "m24",
-      sender_id: "u3",
-      sender_name: "Мария Козлова",
-      content:
-        "Отлично, жду ваши правки по цветовой палитре. Буду на связи, если возникнут вопросы.",
-      timestamp: "11:45",
-      date: TODAY,
-    },
-  ],
-  c3: [
-    {
-      id: "m30",
-      sender_id: "u5",
-      sender_name: "Алексей Новиков",
-      content:
-        "Привет! Начал работу над API-модулем. Планирую использовать REST для основных операций и WebSocket для real-time обновлений. Подходит?",
-      timestamp: "08:30",
-      date: YESTERDAY,
-    },
-    {
-      id: "m31",
-      sender_id: CURRENT_USER_ID,
-      sender_name: "Вы",
-      content:
-        "Привет, Алексей. Да, подход правильный. Только для WebSocket давай используем Socket.IO -- там из коробки reconnect и fallback на polling.",
-      timestamp: "08:50",
-      date: YESTERDAY,
-    },
-    {
-      id: "m32",
-      sender_id: "u5",
-      sender_name: "Алексей Новиков",
-      content:
-        "Согласен. Документация по эндпоинтам готова, залил в Swagger. Там 15 эндпоинтов: авторизация, CRUD проектов, задачи и комментарии.",
-      timestamp: "09:12",
-      date: YESTERDAY,
-    },
-  ],
-};
-
-const MOCK_PROJECTS = [
-  { id: "p1", name: "Мобильное приложение" },
-  { id: "p2", name: "Веб-портал" },
-  { id: "p3", name: "API Интеграция" },
-  { id: "p4", name: "CRM Система" },
-];
-
-// ─── Sub-Components ─────────────────────────────────────────────────────────
-
-function TypingIndicator({ name }: { name: string }) {
-  return (
-    <div className="flex items-center gap-3 px-4 py-2">
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span>{name} печатает</span>
-        <span className="flex gap-0.5">
-          <span className="inline-block h-1 w-1 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
-          <span className="inline-block h-1 w-1 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
-          <span className="inline-block h-1 w-1 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
-        </span>
-      </div>
-    </div>
-  );
+function formatDate(
+  dateStr: string,
+  t: (key: string) => string,
+  locale: string
+): string {
+  try {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(startOfToday.getTime() - 86400000);
+    if (d >= startOfToday) return t("common.today");
+    if (d >= startOfYesterday) return t("common.yesterday");
+    return d.toLocaleDateString(locale === "en" ? "en-US" : "ru-RU", {
+      day: "numeric",
+      month: "short",
+    });
+  } catch {
+    return "";
+  }
 }
 
-function DateSeparator({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-4 py-4">
-      <div className="flex-1 h-px bg-border" />
-      <span className="text-xs font-medium text-muted-foreground px-2 select-none">
-        {label}
-      </span>
-      <div className="flex-1 h-px bg-border" />
-    </div>
-  );
+function formatFullDate(dateStr: string, locale: string): string {
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString(locale === "en" ? "en-US" : "ru-RU", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  } catch {
+    return "";
+  }
 }
 
-function MessageBubble({
-  message,
-  isOwn,
-  onTranslate,
-  onCopy,
-}: {
-  message: Message;
-  isOwn: boolean;
-  onTranslate: (id: string) => void;
-  onCopy: (content: string) => void;
-}) {
-  const [showActions, setShowActions] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    onCopy(message.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div
-      className={`flex gap-3 group px-4 ${isOwn ? "flex-row-reverse" : "flex-row"}`}
-      onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => setShowActions(false)}
-    >
-      {/* Avatar */}
-      {!isOwn && (
-        <Avatar className="h-8 w-8 mt-0.5 shrink-0">
-          <AvatarFallback className="text-xs bg-primary/10 text-primary font-medium">
-            {getInitials(message.sender_name)}
-          </AvatarFallback>
-        </Avatar>
-      )}
-
-      <div className={`max-w-[70%] min-w-[120px] ${isOwn ? "items-end" : "items-start"}`}>
-        {/* Sender name */}
-        {!isOwn && (
-          <p className="text-xs font-medium text-muted-foreground mb-1 ml-1">
-            {message.sender_name}
-          </p>
-        )}
-
-        {/* Bubble */}
-        <div
-          className={`relative rounded-2xl px-4 py-2.5 text-sm leading-relaxed transition-colors ${
-            isOwn
-              ? "bg-primary text-primary-foreground rounded-br-md"
-              : "bg-muted rounded-bl-md"
-          }`}
-        >
-          <p className="whitespace-pre-wrap break-words">{message.content}</p>
-
-          {/* Translation */}
-          {message.isTranslating && (
-            <div className="mt-2 pt-2 border-t border-current/10">
-              <div className="flex items-center gap-2">
-                <div className="h-3 w-3 rounded-full border-2 border-current/30 border-t-current/80 animate-spin" />
-                <span className="text-xs opacity-70">Переводим...</span>
-              </div>
-            </div>
-          )}
-          {message.translation && !message.isTranslating && (
-            <div className={`mt-2 pt-2 border-t ${isOwn ? "border-primary-foreground/15" : "border-border"}`}>
-              <p className="text-xs font-medium opacity-60 mb-0.5">AI перевод</p>
-              <p className="italic text-sm opacity-80">{message.translation}</p>
-            </div>
-          )}
-
-          {/* Timestamp inside bubble */}
-          <div className={`flex items-center gap-1 mt-1 ${isOwn ? "justify-end" : "justify-start"}`}>
-            <span className={`text-[10px] ${isOwn ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
-              {message.timestamp}
-            </span>
-          </div>
-        </div>
-
-        {/* Hover actions */}
-        <div
-          className={`flex items-center gap-0.5 mt-1 transition-all duration-200 ${
-            showActions ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1 pointer-events-none"
-          } ${isOwn ? "justify-end mr-1" : "justify-start ml-1"}`}
-        >
-          <button
-            onClick={() => onTranslate(message.id)}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            title="Перевести"
-          >
-            <Languages className="h-3 w-3" />
-          </button>
-          <button
-            onClick={handleCopy}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            title="Копировать"
-          >
-            {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-          </button>
-          <button
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            title="Ответить"
-          >
-            <Reply className="h-3 w-3" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+function isDMConversation(conv: Conversation): boolean {
+  return conv.participants.length === 2 && !conv.title;
 }
 
-function ConversationItem({
-  conversation,
-  isActive,
-  onClick,
-}: {
-  conversation: Conversation;
-  isActive: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left px-4 py-3 transition-all duration-150 flex items-center gap-3 ${
-        isActive
-          ? "bg-primary/[0.08] border-l-2 border-l-primary"
-          : "hover:bg-muted/50 border-l-2 border-l-transparent"
-      }`}
-    >
-      {/* Avatar */}
-      <Avatar className="h-11 w-11 shrink-0">
-        <AvatarFallback
-          className={`${conversation.avatar_color} text-white text-sm font-semibold`}
-        >
-          {getInitials(conversation.project_name)}
-        </AvatarFallback>
-      </Avatar>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2 mb-0.5">
-          <span className="font-semibold text-sm truncate">
-            {conversation.project_name}
-          </span>
-          <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">
-            {conversation.last_message_time}
-          </span>
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground truncate leading-relaxed">
-            {conversation.last_message}
-          </p>
-          {conversation.unread > 0 && (
-            <Badge className="h-5 min-w-[20px] px-1.5 text-[10px] font-bold shrink-0 rounded-full">
-              {conversation.unread}
-            </Badge>
-          )}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function ParticipantAvatarStack({ participants }: { participants: Participant[] }) {
-  const others = participants.filter((p) => p.id !== CURRENT_USER_ID).slice(0, 4);
-  return (
-    <div className="flex -space-x-2">
-      {others.map((p) => (
-        <div key={p.id} className="relative">
-          <Avatar className="h-7 w-7 border-2 border-background">
-            <AvatarFallback className="text-[10px] bg-primary/10 text-primary font-medium">
-              {getInitials(p.name)}
-            </AvatarFallback>
-          </Avatar>
-          {p.online && (
-            <span className="absolute -bottom-0 -right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-background" />
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─── Main Component ─────────────────────────────────────────────────────────
+// ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  // State
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputValue, setInputValue] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [isSending, setIsSending] = useState(false);
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [typingUser, setTypingUser] = useState<string | null>(null);
-  const [isMobileViewingMessages, setIsMobileViewingMessages] = useState(false);
-  const [isSummarizing, setIsSummarizing] = useState(false);
-  const [showNewChatDialog, setShowNewChatDialog] = useState(false);
-  const [newChatProject, setNewChatProject] = useState("");
-  const [newChatTitle, setNewChatTitle] = useState("");
-  const [showInfoPanel, setShowInfoPanel] = useState(false);
+  const router = useRouter();
+  const { user } = useAuth();
+  const { locale, t } = useLocale();
+  const { users, loading: usersLoading, getUserName, getUserEmail } = useUsers();
+  const { socket, isConnected, emit, on, off } = useSocket();
 
-  // Refs
+  // Core state
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [messageText, setMessageText] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [mobileShowMessages, setMobileShowMessages] = useState(false);
+
+  // Typing indicator
+  const [typingUser, setTypingUser] = useState<string | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout>();
+  const typingEmitRef = useRef<NodeJS.Timeout>();
+
+  // Translations
+  const [translations, setTranslations] = useState<Record<string, string>>({});
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // New DM dialog
+  const [dmDialogOpen, setDmDialogOpen] = useState(false);
+  const [dmSearchQuery, setDmSearchQuery] = useState("");
+
+  // Create group dialog
+  const [createOpen, setCreateOpen] = useState(false);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [newProjectId, setNewProjectId] = useState("");
+  const [newTitle, setNewTitle] = useState("");
+  const [newParticipants, setNewParticipants] = useState<string[]>([]);
+  const [participantSearch, setParticipantSearch] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  // Conversation info sheet
+  const [infoOpen, setInfoOpen] = useState(false);
+
+  // Add member dialog
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
+  const [addMemberSearch, setAddMemberSearch] = useState("");
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Derived
-  const activeConversation = useMemo(
-    () => conversations.find((c) => c.id === activeConversationId) || null,
-    [conversations, activeConversationId]
-  );
+  // ─── Data Loading ──────────────────────────────────────────────────────────
 
-  const filteredConversations = useMemo(() => {
-    if (!searchQuery.trim()) return conversations;
-    const q = searchQuery.toLowerCase();
-    return conversations.filter(
-      (c) =>
-        c.title.toLowerCase().includes(q) ||
-        c.project_name.toLowerCase().includes(q) ||
-        c.last_message.toLowerCase().includes(q)
-    );
-  }, [conversations, searchQuery]);
-
-  const messageGroups = useMemo(() => groupMessagesByDate(messages), [messages]);
-
-  // ─── Effects ────────────────────────────────────────────────────────────
-
-  // Load mock data on mount
-  useEffect(() => {
-    setConversations(MOCK_CONVERSATIONS);
-    // Don't auto-select on mobile
-    if (window.innerWidth >= 768) {
-      setActiveConversationId("c1");
+  const loadConversations = useCallback(async () => {
+    try {
+      const data = await api.get<any[]>(
+        `/api/chat/conversations${user?.id ? `?userId=${user.id}` : ""}`
+      );
+      if (data) setConversations(data);
+    } catch {
+      // keep empty state
     }
-  }, []);
+    setLoading(false);
+  }, [user?.id]);
 
-  // Socket connection
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
+    loadConversations();
+  }, [loadConversations]);
 
-    const newSocket = io(SOCKET_URL, {
-      auth: { token },
-      transports: ["websocket"],
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-    });
-
-    newSocket.on("connect", () => {
-      console.log("[Chat] Socket connected");
-    });
-
-    newSocket.on("new_message", (message: Message) => {
-      setMessages((prev) => [...prev, message]);
-      // Play notification sound placeholder
-      if (document.hidden) {
-        try {
-          new Audio("/notification.mp3").play().catch(() => {});
-        } catch {}
-      }
-    });
-
-    newSocket.on("user_typing", (data: { user_name: string }) => {
-      setTypingUser(data.user_name);
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = setTimeout(() => setTypingUser(null), 3000);
-    });
-
-    setSocket(newSocket);
-    return () => {
-      newSocket.disconnect();
+  // Load projects for create group dialog
+  useEffect(() => {
+    const loadProjects = async () => {
+      try {
+        const p = await api.get<any[]>("/api/projects/projects").catch(() => []);
+        if (Array.isArray(p)) setProjects(p.map((x: any) => ({ id: x.id, title: x.title })));
+      } catch {}
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadProjects();
   }, []);
 
-  // Load messages when switching conversations
-  useEffect(() => {
-    if (!activeConversationId) return;
-
-    const mockMsgs = MOCK_MESSAGES[activeConversationId];
-    if (mockMsgs) {
-      setMessages(mockMsgs);
-    } else {
+  // Load messages for selected conversation
+  const loadMessages = useCallback(async (convId: string) => {
+    setMessagesLoading(true);
+    try {
+      const data = await api.get<{ messages: Message[] }>(
+        `/api/chat/conversations/${convId}/messages?take=100`
+      );
+      if (data?.messages) setMessages(data.messages);
+    } catch {
       setMessages([]);
     }
-
-    setTypingUser(null);
-
-    // Socket room management
-    if (socket) {
-      socket.emit("leave_room", { conversation_id: activeConversationId });
-      socket.emit("join_room", { conversation_id: activeConversationId });
-    }
-
-    // Mark as read
-    setConversations((prev) =>
-      prev.map((c) => (c.id === activeConversationId ? { ...c, unread: 0 } : c))
-    );
-  }, [activeConversationId, socket]);
-
-  // Auto-scroll
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, typingUser]);
-
-  // Auto-resize textarea
-  const handleTextareaInput = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const maxHeight = 4 * 24; // 4 lines
-    el.style.height = Math.min(el.scrollHeight, maxHeight) + "px";
+    setMessagesLoading(false);
   }, []);
 
-  // ─── Handlers ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (selectedConv) {
+      loadMessages(selectedConv.id);
+    }
+  }, [selectedConv?.id, loadMessages]);
 
-  const handleSend = useCallback(() => {
-    if (!inputValue.trim() || !activeConversationId || isSending) return;
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
-    const newMessage: Message = {
-      id: `m-${Date.now()}`,
-      sender_id: CURRENT_USER_ID,
-      sender_name: "Вы",
-      content: inputValue.trim(),
-      timestamp: new Date().toLocaleTimeString("ru-RU", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-      date: new Date().toISOString().split("T")[0],
+  // ─── WebSocket ─────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!selectedConv || !socket) return;
+    emit("join_conversation", selectedConv.id);
+
+    const handleNewMessage = (msg: Message) => {
+      if (msg.conversationId === selectedConv.id) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+      }
+      // Update conversation list preview
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === msg.conversationId
+            ? {
+                ...c,
+                messages: [{ id: msg.id, content: msg.content, senderId: msg.senderId, createdAt: msg.createdAt }],
+                updatedAt: msg.createdAt,
+              }
+            : c
+        )
+      );
     };
 
-    setIsSending(true);
+    const handleTyping = (data: { userId: string; conversationId: string }) => {
+      if (data.conversationId === selectedConv.id && data.userId !== user?.id) {
+        setTypingUser(data.userId);
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => setTypingUser(null), 3000);
+      }
+    };
 
-    // Optimistic update
-    setMessages((prev) => [...prev, newMessage]);
-    setInputValue("");
+    const handleStopTyping = () => setTypingUser(null);
+
+    on("new_message", handleNewMessage);
+    on("user_typing", handleTyping);
+    on("user_stop_typing", handleStopTyping);
+
+    return () => {
+      emit("leave_conversation", selectedConv.id);
+      off("new_message", handleNewMessage);
+      off("user_typing", handleTyping);
+      off("user_stop_typing", handleStopTyping);
+    };
+  }, [selectedConv?.id, socket, emit, on, off, user?.id]);
+
+  // ─── Name resolution ──────────────────────────────────────────────────────
+
+  const resolveUserName = useCallback(
+    (userId: string): string => {
+      if (userId === user?.id) return user.name;
+      return getUserName(userId);
+    },
+    [user, getUserName]
+  );
+
+  const getConversationTitle = useCallback(
+    (conv: Conversation): string => {
+      if (conv.title) return conv.title;
+      // For DMs show the other person's name
+      if (conv.participants.length === 2) {
+        const otherParticipant = conv.participants.find((p) => p.userId !== user?.id);
+        if (otherParticipant) return resolveUserName(otherParticipant.userId);
+      }
+      return t("chat.conversation");
+    },
+    [user?.id, resolveUserName, t]
+  );
+
+  const getConversationInitial = useCallback(
+    (conv: Conversation): string => {
+      const title = getConversationTitle(conv);
+      return title[0]?.toUpperCase() || "?";
+    },
+    [getConversationTitle]
+  );
+
+  // ─── Typing emission ──────────────────────────────────────────────────────
+
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setMessageText(e.target.value);
+    if (selectedConv && socket) {
+      // Debounce typing emit
+      if (!typingEmitRef.current) {
+        emit("typing", { conversationId: selectedConv.id, userId: user?.id });
+      }
+      clearTimeout(typingEmitRef.current);
+      typingEmitRef.current = setTimeout(() => {
+        typingEmitRef.current = undefined;
+      }, 1000);
+    }
+  };
+
+  // ─── Translate ─────────────────────────────────────────────────────────────
+
+  const handleTranslate = async (msg: Message) => {
+    if (translations[msg.id]) return;
+    try {
+      const result = await api.post<any>(
+        `/api/chat/conversations/${msg.conversationId}/messages/${msg.id}/translate`,
+        { targetLanguage: locale === "ru" ? "en" : "ru" }
+      );
+      if (result?.translatedContent) {
+        setTranslations((prev) => ({ ...prev, [msg.id]: result.translatedContent }));
+      }
+    } catch {}
+  };
+
+  // ─── Send message ─────────────────────────────────────────────────────────
+
+  const handleSend = async () => {
+    if (!messageText.trim() || !selectedConv || !user) return;
+    const text = messageText.trim();
+    setMessageText("");
+    setSending(true);
 
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
 
-    // Update conversation last message
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === activeConversationId
-          ? {
-              ...c,
-              last_message: newMessage.content,
-              last_message_time: newMessage.timestamp,
-              last_message_date: newMessage.date,
-            }
-          : c
-      )
-    );
+    // Optimistic update
+    const tempMsg: Message = {
+      id: `temp-${Date.now()}`,
+      conversationId: selectedConv.id,
+      senderId: user.id,
+      content: text,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, tempMsg]);
 
-    // Emit via socket
+    // Update conversation list
+    setConversations((prev) => {
+      const updated = prev.map((c) =>
+        c.id === selectedConv.id
+          ? { ...c, messages: [{ id: tempMsg.id, content: text, senderId: user.id, createdAt: tempMsg.createdAt }], updatedAt: tempMsg.createdAt }
+          : c
+      );
+      return updated.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    });
+
     if (socket) {
-      socket.emit("send_message", {
-        conversation_id: activeConversationId,
-        content: newMessage.content,
+      emit("send_message", {
+        conversationId: selectedConv.id,
+        senderId: user.id,
+        content: text,
       });
     }
 
-    setTimeout(() => setIsSending(false), 300);
-  }, [inputValue, activeConversationId, isSending, socket]);
+    try {
+      const msg = await api.post<Message>(
+        `/api/chat/conversations/${selectedConv.id}/messages`,
+        { senderId: user.id, content: text }
+      );
+      setMessages((prev) => prev.map((m) => (m.id === tempMsg.id ? msg : m)));
+    } catch {
+      // keep temp message
+    }
+    setSending(false);
+    textareaRef.current?.focus();
+  };
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        handleSend();
+  // ─── DM creation ──────────────────────────────────────────────────────────
+
+  const handleStartDM = async (targetUser: UserInfo) => {
+    if (!user) return;
+    // Check if a DM already exists with this user
+    const existing = conversations.find(
+      (c) =>
+        c.participants.length === 2 &&
+        c.participants.some((p) => p.userId === targetUser.id) &&
+        c.participants.some((p) => p.userId === user.id)
+    );
+    if (existing) {
+      setSelectedConv(existing);
+      setMobileShowMessages(true);
+      setDmDialogOpen(false);
+      setDmSearchQuery("");
+      return;
+    }
+
+    // Create new DM conversation
+    setCreating(true);
+    try {
+      const conv = await api.post<Conversation>("/api/chat/conversations", {
+        projectId: projects[0]?.id || "",
+        title: null,
+        participantIds: [user.id, targetUser.id],
+      });
+      setConversations((prev) => [conv, ...prev]);
+      setSelectedConv(conv);
+      setMobileShowMessages(true);
+    } catch (err) {
+      console.error("Failed to create DM", err);
+    }
+    setCreating(false);
+    setDmDialogOpen(false);
+    setDmSearchQuery("");
+  };
+
+  // ─── Group creation ───────────────────────────────────────────────────────
+
+  const handleCreateGroup = async () => {
+    if (!newProjectId || newParticipants.length === 0) return;
+    setCreating(true);
+    try {
+      const participantIds = [...newParticipants];
+      if (user && !participantIds.includes(user.id)) {
+        participantIds.push(user.id);
       }
-      // Regular Enter without shift sends message
-      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        handleSend();
-      }
-    },
-    [handleSend]
+      const conv = await api.post<Conversation>("/api/chat/conversations", {
+        projectId: newProjectId,
+        title: newTitle || null,
+        participantIds,
+      });
+      setConversations((prev) => [conv, ...prev]);
+      setSelectedConv(conv);
+      setCreateOpen(false);
+      setNewProjectId("");
+      setNewTitle("");
+      setNewParticipants([]);
+      setParticipantSearch("");
+      setMobileShowMessages(true);
+    } catch (err) {
+      console.error("Failed to create conversation", err);
+    }
+    setCreating(false);
+  };
+
+  const toggleParticipant = (userId: string) => {
+    setNewParticipants((prev) =>
+      prev.includes(userId)
+        ? prev.filter((id) => id !== userId)
+        : [...prev, userId]
+    );
+  };
+
+  // ─── Add member ───────────────────────────────────────────────────────────
+
+  const handleAddMember = async (targetUser: UserInfo) => {
+    if (!selectedConv) return;
+    // Already a participant?
+    if (selectedConv.participants.some((p) => p.userId === targetUser.id)) return;
+    try {
+      // Recreate conversation with the new participant added
+      const newParticipantIds = [
+        ...selectedConv.participants.map((p) => p.userId),
+        targetUser.id,
+      ];
+      await api.post<any>(`/api/chat/conversations/${selectedConv.id}/participants`, {
+        userId: targetUser.id,
+      }).catch(() => {
+        // Fallback: some APIs might not have a participants endpoint
+        // In that case we just update locally
+      });
+      // Update locally
+      setSelectedConv((prev) =>
+        prev
+          ? {
+              ...prev,
+              participants: [
+                ...prev.participants,
+                { id: `temp-${Date.now()}`, userId: targetUser.id },
+              ],
+            }
+          : prev
+      );
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === selectedConv.id
+            ? {
+                ...c,
+                participants: [
+                  ...c.participants,
+                  { id: `temp-${Date.now()}`, userId: targetUser.id },
+                ],
+              }
+            : c
+        )
+      );
+      setAddMemberOpen(false);
+      setAddMemberSearch("");
+    } catch {}
+  };
+
+  // ─── Leave conversation ───────────────────────────────────────────────────
+
+  const handleLeave = async () => {
+    if (!selectedConv || !user) return;
+    try {
+      await api.post<any>(
+        `/api/chat/conversations/${selectedConv.id}/leave`,
+        { userId: user.id }
+      ).catch(() => {});
+      setConversations((prev) => prev.filter((c) => c.id !== selectedConv.id));
+      setSelectedConv(null);
+      setInfoOpen(false);
+      setMobileShowMessages(false);
+    } catch {}
+  };
+
+  // ─── Filtering ─────────────────────────────────────────────────────────────
+
+  const sortedConversations = [...conversations].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
 
-  const handleTranslate = useCallback((messageId: string) => {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === messageId ? { ...m, isTranslating: true, translation: undefined } : m
-      )
+  const filteredConversations = sortedConversations.filter((c) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    const title = getConversationTitle(c).toLowerCase();
+    return title.includes(q);
+  });
+
+  const filteredDmUsers = users.filter((u) => {
+    if (u.id === user?.id) return false;
+    if (!dmSearchQuery.trim()) return true;
+    const q = dmSearchQuery.toLowerCase();
+    return (
+      u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
     );
+  });
 
-    // Simulate AI translation
-    setTimeout(() => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== messageId) return m;
-          // Simple mock translations
-          const translations: Record<string, string> = {
-            "Добрый день! Хотел обсудить функционал мобильного приложения. Есть несколько важных моментов.":
-              "Good afternoon! I wanted to discuss the mobile app functionality. There are several important points.",
-            "Здравствуйте, Иван! Конечно, готов обсудить. Что именно вас интересует?":
-              "Hello, Ivan! Of course, ready to discuss. What exactly interests you?",
-            "Конечно, обновлю к завтрашнему дню. Спасибо за обратную связь!":
-              "Of course, I will update it by tomorrow. Thanks for the feedback!",
-          };
-          return {
-            ...m,
-            isTranslating: false,
-            translation:
-              translations[m.content] ||
-              "English translation would appear here via AI service.",
-          };
-        })
-      );
-    }, 1500);
-  }, []);
+  const filteredAddMembers = users.filter((u) => {
+    if (!selectedConv) return false;
+    if (selectedConv.participants.some((p) => p.userId === u.id)) return false;
+    if (!addMemberSearch.trim()) return true;
+    const q = addMemberSearch.toLowerCase();
+    return (
+      u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
+    );
+  });
 
-  const handleCopy = useCallback((content: string) => {
-    navigator.clipboard.writeText(content).catch(() => {});
-  }, []);
+  const getRoleBadge = (role: string) => {
+    switch (role) {
+      case "CLIENT":
+        return t("auth.role.client");
+      case "MANAGER":
+        return t("auth.role.manager");
+      default:
+        return t("auth.role.developer");
+    }
+  };
 
-  const handleSummarize = useCallback(() => {
-    if (isSummarizing || messages.length === 0) return;
-    setIsSummarizing(true);
-
-    setTimeout(() => {
-      const summaryMsg: Message = {
-        id: `summary-${Date.now()}`,
-        sender_id: "system",
-        sender_name: "AI Ассистент",
-        content: `Краткое содержание беседы:\n\nУчастники обсудили текущий прогресс по проекту. Основные решения:\n1. Согласованы ключевые функции для первой итерации\n2. Определены сроки для следующего этапа\n3. Распределены задачи между участниками\n\nТребуется действие: подготовить обновленный план к следующей встрече.`,
-        timestamp: new Date().toLocaleTimeString("ru-RU", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        date: new Date().toISOString().split("T")[0],
-      };
-      setMessages((prev) => [...prev, summaryMsg]);
-      setIsSummarizing(false);
-    }, 2000);
-  }, [isSummarizing, messages.length]);
-
-  const handleCreateChat = useCallback(() => {
-    if (!newChatProject) return;
-    const project = MOCK_PROJECTS.find((p) => p.id === newChatProject);
-    if (!project) return;
-
-    const newConversation: Conversation = {
-      id: `c-${Date.now()}`,
-      title: newChatTitle || "Новый диалог",
-      project_name: project.name,
-      project_id: project.id,
-      last_message: "Нет сообщений",
-      last_message_time: new Date().toLocaleTimeString("ru-RU", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-      last_message_date: new Date().toISOString().split("T")[0],
-      unread: 0,
-      participants: [
-        { id: CURRENT_USER_ID, name: "Вы", role: "DEVELOPER", online: true },
-      ],
-      avatar_color: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
-    };
-
-    setConversations((prev) => [newConversation, ...prev]);
-    setActiveConversationId(newConversation.id);
-    setShowNewChatDialog(false);
-    setNewChatProject("");
-    setNewChatTitle("");
-    setIsMobileViewingMessages(true);
-  }, [newChatProject, newChatTitle]);
-
-  const selectConversation = useCallback((id: string) => {
-    setActiveConversationId(id);
-    setIsMobileViewingMessages(true);
-    setShowInfoPanel(false);
-  }, []);
-
-  const handleBackToList = useCallback(() => {
-    setIsMobileViewingMessages(false);
-    setShowInfoPanel(false);
-  }, []);
-
-  // ─── Render ─────────────────────────────────────────────────────────────
+  // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] rounded-xl border bg-card overflow-hidden shadow-sm">
-      {/* ─── Left Panel: Conversations ─── */}
+    <div className="flex h-[calc(100vh-8rem)] rounded-lg border bg-card overflow-hidden">
+      {/* ── Left Panel: Conversation List ───────────────────────────────── */}
       <div
-        className={`w-full md:w-80 border-r flex flex-col shrink-0 transition-all duration-300 ${
-          isMobileViewingMessages ? "hidden md:flex" : "flex"
+        className={`w-full md:w-[340px] md:flex flex-col border-r shrink-0 ${
+          mobileShowMessages ? "hidden md:flex" : "flex"
         }`}
       >
         {/* Header */}
-        <div className="p-4 space-y-3">
+        <div className="p-4 border-b space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold tracking-tight">Сообщения</h2>
-            <Dialog open={showNewChatDialog} onOpenChange={setShowNewChatDialog}>
-              <DialogTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-full"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Новый чат</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 pt-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Проект</label>
-                    <select
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      value={newChatProject}
-                      onChange={(e) => setNewChatProject(e.target.value)}
-                    >
-                      <option value="">Выберите проект...</option>
-                      {MOCK_PROJECTS.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">
-                      Название чата{" "}
-                      <span className="text-muted-foreground font-normal">(необязательно)</span>
-                    </label>
-                    <Input
-                      placeholder="Например: Обсуждение дизайна"
-                      value={newChatTitle}
-                      onChange={(e) => setNewChatTitle(e.target.value)}
-                    />
-                  </div>
-                  <Button
-                    className="w-full"
-                    onClick={handleCreateChat}
-                    disabled={!newChatProject}
-                  >
-                    Создать чат
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+            <h2 className="font-semibold text-lg">{t("chat.title")}</h2>
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => setDmDialogOpen(true)}
+              >
+                <Mail className="h-4 w-4" />
+                <span className="hidden sm:inline">{t("chat.new_message")}</span>
+              </Button>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() => setCreateOpen(true)}
+              >
+                <Plus className="h-4 w-4" />
+                {t("chat.new")}
+              </Button>
+            </div>
           </div>
-
-          {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Поиск по чатам..."
-              className="pl-9 h-9 bg-muted/50 border-0 focus-visible:ring-1"
+              placeholder={t("chat.search")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 h-9"
             />
           </div>
         </div>
 
-        <Separator />
-
-        {/* Conversation List */}
+        {/* Conversation list */}
         <ScrollArea className="flex-1">
-          {filteredConversations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 text-center px-6">
-              <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
-                <MessageSquare className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="text-sm font-medium text-muted-foreground">
-                {searchQuery ? "Ничего не найдено" : "Нет активных диалогов"}
+          {loading ? (
+            <div className="p-4 space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <Skeleton className="h-10 w-10 rounded-full shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-3 w-1/2" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : filteredConversations.length === 0 ? (
+            <div className="p-8 text-center">
+              <MessageSquare className="h-10 w-10 mx-auto text-muted-foreground/40 mb-3" />
+              <p className="text-sm text-muted-foreground">
+                {searchQuery ? t("search.no_results") : t("chat.no_conversations")}
               </p>
-              <p className="text-xs text-muted-foreground/60 mt-1">
-                {searchQuery
-                  ? "Попробуйте другой запрос"
-                  : "Начните новый чат, нажав +"}
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 gap-1.5"
+                onClick={() => setDmDialogOpen(true)}
+              >
+                <Mail className="h-3.5 w-3.5" />
+                {t("chat.new_message")}
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2">
+                {t("chat.or_create_group")}
               </p>
             </div>
           ) : (
-            <div className="py-1">
-              {filteredConversations.map((conv) => (
-                <ConversationItem
-                  key={conv.id}
-                  conversation={conv}
-                  isActive={conv.id === activeConversationId}
-                  onClick={() => selectConversation(conv.id)}
-                />
-              ))}
+            <div>
+              {filteredConversations.map((conv) => {
+                const lastMsg = conv.messages?.[0];
+                const isSelected = selectedConv?.id === conv.id;
+                const isDM = isDMConversation(conv);
+                const title = getConversationTitle(conv);
+                return (
+                  <div
+                    key={conv.id}
+                    className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors hover:bg-accent/50 ${
+                      isSelected ? "bg-accent" : ""
+                    }`}
+                    onClick={() => {
+                      setSelectedConv(conv);
+                      setMobileShowMessages(true);
+                    }}
+                  >
+                    <Avatar className="h-10 w-10 shrink-0">
+                      <AvatarFallback
+                        className={`text-xs ${
+                          isDM
+                            ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
+                            : "bg-primary/10 text-primary"
+                        }`}
+                      >
+                        {isDM ? getUserInitials(title) : title[0]?.toUpperCase() || "?"}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <p className="text-sm font-medium truncate">{title}</p>
+                          {!isDM && (
+                            <Users className="h-3 w-3 text-muted-foreground shrink-0" />
+                          )}
+                        </div>
+                        <span className="text-[10px] text-muted-foreground shrink-0">
+                          {formatDate(conv.updatedAt, t, locale)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-muted-foreground truncate">
+                          {lastMsg
+                            ? `${lastMsg.senderId === user?.id ? "" : resolveUserName(lastMsg.senderId).split(" ")[0] + ": "}${lastMsg.content}`
+                            : t("chat.no_messages")}
+                        </p>
+                        {conv.unreadCount && conv.unreadCount > 0 ? (
+                          <Badge
+                            variant="default"
+                            className="h-5 min-w-[20px] flex items-center justify-center rounded-full px-1.5 text-[10px] shrink-0"
+                          >
+                            {conv.unreadCount}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </ScrollArea>
       </div>
 
-      {/* ─── Right Panel: Messages ─── */}
+      {/* ── Right Panel: Message Area ───────────────────────────────────── */}
       <div
-        className={`flex-1 flex flex-col min-w-0 ${
-          !isMobileViewingMessages ? "hidden md:flex" : "flex"
+        className={`flex-1 flex flex-col ${
+          !mobileShowMessages ? "hidden md:flex" : "flex"
         }`}
       >
-        {activeConversation ? (
+        {selectedConv ? (
           <>
-            {/* ─── Chat Header ─── */}
-            <div className="h-16 px-4 flex items-center justify-between border-b shrink-0 bg-card">
-              <div className="flex items-center gap-3 min-w-0">
-                {/* Mobile back button */}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 md:hidden shrink-0"
-                  onClick={handleBackToList}
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                </Button>
-
-                <Avatar className="h-9 w-9 shrink-0">
-                  <AvatarFallback
-                    className={`${activeConversation.avatar_color} text-white text-xs font-semibold`}
-                  >
-                    {getInitials(activeConversation.project_name)}
-                  </AvatarFallback>
-                </Avatar>
-
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold text-sm truncate">
-                      {activeConversation.project_name}
-                    </h3>
-                    <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0 hidden sm:block" />
-                    <span className="text-xs text-muted-foreground truncate hidden sm:block">
-                      {activeConversation.title}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {activeConversation.participants.length} участник
-                    {activeConversation.participants.length > 1 &&
-                      (activeConversation.participants.length < 5 ? "а" : "ов")}
-                    {" · "}
-                    {activeConversation.participants.filter(
-                      (p) => p.online && p.id !== CURRENT_USER_ID
-                    ).length > 0 && (
-                      <span className="text-emerald-500">
-                        {
-                          activeConversation.participants.filter(
-                            (p) => p.online && p.id !== CURRENT_USER_ID
-                          ).length
-                        }{" "}
-                        в сети
-                      </span>
-                    )}
+            {/* Chat header */}
+            <div className="h-14 border-b flex items-center gap-3 px-4 shrink-0">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="md:hidden h-8 w-8"
+                onClick={() => setMobileShowMessages(false)}
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold truncate">
+                    {getConversationTitle(selectedConv)}
                   </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <ParticipantAvatarStack
-                  participants={activeConversation.participants}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-full"
-                  onClick={() => setShowInfoPanel(!showInfoPanel)}
-                >
-                  <Info className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-
-            {/* ─── Chat Body ─── */}
-            <div className="flex-1 flex overflow-hidden">
-              {/* Messages Area */}
-              <ScrollArea className="flex-1">
-                <div className="py-4 space-y-1 min-h-full flex flex-col justify-end">
-                  {messageGroups.map((group) => (
-                    <div key={group.date}>
-                      <DateSeparator label={group.label} />
-                      <div className="space-y-3">
-                        {group.messages.map((msg) => (
-                          <MessageBubble
-                            key={msg.id}
-                            message={msg}
-                            isOwn={msg.sender_id === CURRENT_USER_ID}
-                            onTranslate={handleTranslate}
-                            onCopy={handleCopy}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-
-                  {/* Typing indicator */}
-                  {typingUser && <TypingIndicator name={typingUser} />}
-
-                  <div ref={messagesEndRef} />
-                </div>
-              </ScrollArea>
-
-              {/* Info Side Panel */}
-              {showInfoPanel && (
-                <div className="w-72 border-l bg-card shrink-0 overflow-auto hidden lg:block">
-                  <div className="p-4 space-y-6">
-                    <div className="text-center">
-                      <Avatar className="h-16 w-16 mx-auto mb-3">
-                        <AvatarFallback
-                          className={`${activeConversation.avatar_color} text-white text-xl font-bold`}
-                        >
-                          {getInitials(activeConversation.project_name)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <h4 className="font-bold">{activeConversation.project_name}</h4>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {activeConversation.title}
-                      </p>
-                    </div>
-
-                    <Separator />
-
-                    <div>
-                      <h5 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                        Участники ({activeConversation.participants.length})
-                      </h5>
-                      <div className="space-y-3">
-                        {activeConversation.participants.map((p) => (
-                          <div
-                            key={p.id}
-                            className="flex items-center gap-3"
-                          >
-                            <div className="relative">
-                              <Avatar className="h-8 w-8">
-                                <AvatarFallback className="text-xs bg-primary/10 text-primary font-medium">
-                                  {getInitials(p.name)}
-                                </AvatarFallback>
-                              </Avatar>
-                              {p.online && (
-                                <span className="absolute -bottom-0 -right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-card" />
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium truncate">
-                                {p.id === CURRENT_USER_ID ? "Вы" : p.name}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {p.role === "CLIENT"
-                                  ? "Заказчик"
-                                  : p.role === "MANAGER"
-                                    ? "Менеджер"
-                                    : "Разработчик"}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <Separator />
-
-                    <div>
-                      <h5 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                        Проект
-                      </h5>
-                      <button className="w-full text-left text-sm text-primary hover:underline">
-                        {activeConversation.project_name}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* ─── Input Area ─── */}
-            <div className="border-t bg-card px-4 py-3 shrink-0">
-              <div className="flex items-end gap-2">
-                {/* Attach */}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground"
-                  title="Прикрепить файл"
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
-
-                {/* Textarea */}
-                <div className="flex-1 relative">
-                  <textarea
-                    ref={textareaRef}
-                    value={inputValue}
-                    onChange={(e) => {
-                      setInputValue(e.target.value);
-                      handleTextareaInput();
-                    }}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Введите сообщение..."
-                    rows={1}
-                    disabled={isSending}
-                    className="w-full resize-none rounded-xl border border-input bg-muted/30 px-4 py-2.5 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 leading-relaxed"
-                    style={{ minHeight: "40px", maxHeight: "96px" }}
+                  <div
+                    className={`h-2 w-2 rounded-full shrink-0 ${
+                      isConnected ? "bg-emerald-500" : "bg-muted-foreground/30"
+                    }`}
+                    title={
+                      isConnected ? t("chat.connected") : t("chat.disconnected")
+                    }
                   />
                 </div>
-
-                {/* AI Summarize */}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground"
-                  onClick={handleSummarize}
-                  disabled={isSummarizing || messages.length === 0}
-                  title="AI Резюме беседы"
-                >
-                  {isSummarizing ? (
-                    <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground animate-spin" />
-                  ) : (
-                    <Brain className="h-4 w-4" />
-                  )}
-                </Button>
-
-                {/* Send */}
-                <Button
-                  size="icon"
-                  className="h-9 w-9 rounded-full shrink-0 transition-all duration-200"
-                  onClick={handleSend}
-                  disabled={!inputValue.trim() || isSending}
-                >
-                  <SendHorizontal className="h-4 w-4" />
-                </Button>
+                <p className="text-xs text-muted-foreground">
+                  {isDMConversation(selectedConv)
+                    ? t("chat.direct_message")
+                    : `${selectedConv.participants?.length || 0} ${t("chat.participants_count")}`}
+                </p>
               </div>
-              <p className="text-[10px] text-muted-foreground/50 mt-1.5 text-right select-none">
-                Enter -- отправить, Shift+Enter -- новая строка
-              </p>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                title={t("call.start")}
+                onClick={async () => {
+                  try {
+                    const data = await api.post<{ id: string }>("/api/chat/calls", {
+                      conversationId: selectedConv.id,
+                    });
+                    if (data?.id) {
+                      router.push(`/call/${data.id}`);
+                    }
+                  } catch {
+                    // fallback: use conversation id as call id
+                    router.push(`/call/${selectedConv.id}`);
+                  }
+                }}
+              >
+                <Video className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setInfoOpen(true)}
+              >
+                <Info className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* Messages */}
+            <ScrollArea className="flex-1 p-2 sm:p-4">
+              {messagesLoading ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="text-center py-12">
+                  <MessageSquare className="h-8 w-8 mx-auto text-muted-foreground/40 mb-2" />
+                  <p className="text-sm text-muted-foreground">
+                    {t("chat.first_message")}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {messages.map((msg) => {
+                    const isMe = msg.senderId === user?.id;
+                    const senderName = resolveUserName(msg.senderId);
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`group flex gap-2.5 ${
+                          isMe ? "flex-row-reverse" : ""
+                        }`}
+                      >
+                        <Avatar className="h-8 w-8 shrink-0 mt-1">
+                          <AvatarFallback className="text-[10px] bg-primary/10 text-primary">
+                            {getUserInitials(senderName)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div
+                          className={`max-w-[70%] ${isMe ? "text-right" : ""}`}
+                        >
+                          <div
+                            className={`flex items-center gap-2 mb-0.5 ${
+                              isMe ? "justify-end" : ""
+                            }`}
+                          >
+                            {!isMe && (
+                              <span className="text-xs font-medium">
+                                {senderName}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+                              {formatTime(msg.createdAt, locale)}
+                            </span>
+                          </div>
+                          <div
+                            className={`inline-block rounded-xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words max-w-full ${
+                              isMe
+                                ? "bg-primary text-primary-foreground rounded-tr-sm"
+                                : "bg-muted rounded-tl-sm"
+                            }`}
+                          >
+                            {(() => {
+                              const fileUrl = (msg as any).fileUrl;
+                              const fileType = (msg as any).fileType;
+                              const fileName = (msg as any).fileName;
+                              const fileSize = (msg as any).fileSize;
+                              const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
+                              const authUrl = fileUrl ? `${fileUrl}?token=${token}` : "";
+
+                              if (fileUrl && fileType?.startsWith("image/")) {
+                                return (
+                                  <img
+                                    src={authUrl}
+                                    alt={fileName || "image"}
+                                    className="rounded-lg max-w-[280px] max-h-[200px] object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                                    onClick={() => setPreviewImage(authUrl)}
+                                  />
+                                );
+                              }
+                              if (fileUrl) {
+                                return (
+                                  <a
+                                    href={authUrl}
+                                    download={fileName}
+                                    className={`flex items-center gap-2 ${isMe ? "text-primary-foreground/90 hover:text-primary-foreground" : "text-foreground hover:text-primary"} transition-colors`}
+                                  >
+                                    <Paperclip className="h-4 w-4 shrink-0" />
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium truncate">{fileName}</p>
+                                      {fileSize && (
+                                        <p className="text-[10px] opacity-70">
+                                          {fileSize > 1048576
+                                            ? `${(fileSize / 1048576).toFixed(1)} MB`
+                                            : `${(fileSize / 1024).toFixed(0)} KB`}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </a>
+                                );
+                              }
+                              return null;
+                            })()}
+                            {msg.content && <span>{msg.content}</span>}
+                          </div>
+                          <div
+                            className={`flex items-center gap-2 mt-0.5 ${
+                              isMe ? "justify-end" : ""
+                            }`}
+                          >
+                            <button
+                              onClick={() => handleTranslate(msg)}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1"
+                            >
+                              <Languages className="h-3 w-3" />
+                              {t("common.translate")}
+                            </button>
+                          </div>
+                          {translations[msg.id] && (
+                            <p
+                              className={`text-xs text-muted-foreground/70 italic mt-0.5 px-3.5 ${
+                                isMe ? "text-right" : ""
+                              }`}
+                            >
+                              {translations[msg.id]}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+              )}
+            </ScrollArea>
+
+            {/* Typing indicator */}
+            {typingUser && (
+              <div className="px-4 py-1 text-xs text-muted-foreground animate-pulse">
+                {resolveUserName(typingUser)} {t("chat.typing")}
+              </div>
+            )}
+
+            {/* Input area */}
+            <div className="border-t p-2 sm:p-3 flex gap-2 shrink-0 items-end">
+              <label className="shrink-0 cursor-pointer">
+                <input
+                  type="file"
+                  className="hidden"
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.csv"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file || !selectedConv || !user) return;
+                    e.target.value = "";
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    formData.append("senderId", user.id);
+                    try {
+                      const token = localStorage.getItem("token");
+                      const resp = await fetch(`/api/chat/upload/${selectedConv.id}`, {
+                        method: "POST",
+                        headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        body: formData,
+                      });
+                      if (resp.ok) {
+                        const msg = await resp.json();
+                        setMessages((prev) => {
+                          if (prev.some((m) => m.id === msg.id)) return prev;
+                          return [...prev, msg];
+                        });
+                      }
+                    } catch {}
+                  }}
+                />
+                <div className="h-10 w-10 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
+                  <Paperclip className="h-4 w-4" />
+                </div>
+              </label>
+              <Textarea
+                ref={textareaRef}
+                placeholder={t("chat.type_message")}
+                value={messageText}
+                onChange={handleTextareaChange}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                className="flex-1 min-h-[40px] max-h-[120px] resize-none"
+                rows={1}
+                onInput={(e) => {
+                  const target = e.target as HTMLTextAreaElement;
+                  target.style.height = "auto";
+                  target.style.height = Math.min(target.scrollHeight, 120) + "px";
+                }}
+              />
+              <Button
+                size="icon"
+                onClick={handleSend}
+                disabled={!messageText.trim() || sending}
+                title={t("chat.send")}
+                className="shrink-0 h-10 w-10"
+              >
+                <SendHorizontal className="h-4 w-4" />
+              </Button>
             </div>
           </>
         ) : (
-          /* ─── Empty State ─── */
-          <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
-            <div className="h-20 w-20 rounded-full bg-muted/50 flex items-center justify-center mb-6">
-              <MessageSquare className="h-10 w-10 text-muted-foreground/50" />
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center space-y-3">
+              <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground/30 mb-3" />
+              <p className="text-muted-foreground">
+                {t("chat.select_conversation")}
+              </p>
+              <div className="flex gap-2 justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => setDmDialogOpen(true)}
+                >
+                  <Mail className="h-3.5 w-3.5" />
+                  {t("chat.new_message")}
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => setCreateOpen(true)}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("chat.group_chat")}
+                </Button>
+              </div>
             </div>
-            <h3 className="text-xl font-semibold mb-2">Выберите чат</h3>
-            <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
-              Выберите существующий диалог из списка слева или создайте новый чат
-              для общения с командой проекта.
-            </p>
-            <Button
-              variant="outline"
-              className="mt-6"
-              onClick={() => setShowNewChatDialog(true)}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Начать новый чат
-            </Button>
           </div>
         )}
       </div>
+
+      {/* ── New DM Dialog ───────────────────────────────────────────────── */}
+      <Dialog open={dmDialogOpen} onOpenChange={setDmDialogOpen}>
+        <DialogContent className="max-w-[95vw] sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("chat.new_message")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 mt-1">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder={t("chat.search_users")}
+                value={dmSearchQuery}
+                onChange={(e) => setDmSearchQuery(e.target.value)}
+                className="pl-9"
+                autoFocus
+              />
+            </div>
+            <div className="border rounded-lg max-h-[300px] overflow-y-auto">
+              {usersLoading ? (
+                <div className="p-4 flex justify-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : filteredDmUsers.length === 0 ? (
+                <div className="p-4 text-center text-sm text-muted-foreground">
+                  {t("chat.no_users")}
+                </div>
+              ) : (
+                filteredDmUsers.map((u) => (
+                  <div
+                    key={u.id}
+                    className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-accent/50 transition-colors"
+                    onClick={() => handleStartDM(u)}
+                  >
+                    <Avatar className="h-9 w-9 shrink-0">
+                      <AvatarFallback className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300">
+                        {getUserInitials(u.name)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{u.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {u.email}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] shrink-0">
+                      {getRoleBadge(u.role)}
+                    </Badge>
+                  </div>
+                ))
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground text-center">
+              {t("chat.start_conversation")}
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Create Group Dialog ─────────────────────────────────────────── */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-[95vw] sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("chat.group_chat")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="space-y-2">
+              <Label>{t("chat.project")} *</Label>
+              <Select value={newProjectId} onValueChange={setNewProjectId}>
+                <SelectTrigger>
+                  <SelectValue
+                    placeholder={
+                      projects.length === 0
+                        ? t("common.loading")
+                        : t("chat.select_project")
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.title}
+                    </SelectItem>
+                  ))}
+                  {projects.length === 0 && (
+                    <div className="p-2 text-center text-xs text-muted-foreground">
+                      {t("common.loading")}
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>{t("common.title")}</Label>
+              <Input
+                placeholder={t("chat.topic")}
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>
+                {t("chat.participants")} *{" "}
+                <span className="text-muted-foreground font-normal">
+                  ({newParticipants.length} {t("chat.selected")})
+                </span>
+              </Label>
+              <Input
+                placeholder={t("chat.search_users")}
+                value={participantSearch}
+                onChange={(e) => setParticipantSearch(e.target.value)}
+                className="mb-2"
+              />
+              <div className="border rounded-lg max-h-[150px] sm:max-h-[200px] overflow-y-auto">
+                {users
+                  .filter((u) => u.id !== user?.id)
+                  .filter((u) => {
+                    if (!participantSearch.trim()) return true;
+                    const q = participantSearch.toLowerCase();
+                    return u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+                  })
+                  .map((u) => {
+                    const selected = newParticipants.includes(u.id);
+                    return (
+                      <div
+                        key={u.id}
+                        className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-accent/50 transition-colors ${
+                          selected ? "bg-primary/5" : ""
+                        }`}
+                        onClick={() => toggleParticipant(u.id)}
+                      >
+                        <div
+                          className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 ${
+                            selected
+                              ? "bg-primary border-primary"
+                              : "border-input"
+                          }`}
+                        >
+                          {selected && (
+                            <svg
+                              className="h-3 w-3 text-primary-foreground"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              strokeWidth={3}
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M5 13l4 4L19 7"
+                              />
+                            </svg>
+                          )}
+                        </div>
+                        <Avatar className="h-7 w-7">
+                          <AvatarFallback className="text-[10px] bg-primary/10 text-primary">
+                            {getUserInitials(u.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {u.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {u.email}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] shrink-0">
+                          {getRoleBadge(u.role)}
+                        </Badge>
+                      </div>
+                    );
+                  })}
+                {users.filter((u) => u.id !== user?.id).length === 0 && (
+                  <div className="p-4 text-center text-sm text-muted-foreground">
+                    {t("chat.no_users")}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={handleCreateGroup}
+              disabled={
+                !newProjectId || newParticipants.length === 0 || creating
+              }
+            >
+              {creating ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : null}
+              {t("common.create")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Conversation Info Sheet ─────────────────────────────────────── */}
+      <Sheet open={infoOpen} onOpenChange={setInfoOpen}>
+        <SheetContent side="right" className="w-[320px] sm:w-[380px]">
+          <SheetHeader>
+            <SheetTitle>{t("chat.info")}</SheetTitle>
+          </SheetHeader>
+          {selectedConv && (
+            <div className="mt-4 space-y-6">
+              {/* Conversation title */}
+              <div className="text-center">
+                <Avatar className="h-16 w-16 mx-auto mb-2">
+                  <AvatarFallback className="text-xl bg-primary/10 text-primary">
+                    {getConversationInitial(selectedConv)}
+                  </AvatarFallback>
+                </Avatar>
+                <h3 className="font-semibold text-lg">
+                  {getConversationTitle(selectedConv)}
+                </h3>
+                {!isDMConversation(selectedConv) && (
+                  <p className="text-sm text-muted-foreground">
+                    {selectedConv.participants.length} {t("chat.participants_count")}
+                  </p>
+                )}
+              </div>
+
+              {/* Created date */}
+              {selectedConv.createdAt && (
+                <div className="text-sm text-muted-foreground text-center">
+                  {t("chat.created_at")}: {formatFullDate(selectedConv.createdAt, locale)}
+                </div>
+              )}
+
+              <Separator />
+
+              {/* Members list */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium">
+                    {t("chat.members")} ({selectedConv.participants.length})
+                  </h4>
+                  {!isDMConversation(selectedConv) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1 h-7 text-xs"
+                      onClick={() => setAddMemberOpen(true)}
+                    >
+                      <UserPlus className="h-3.5 w-3.5" />
+                      {t("chat.add_member")}
+                    </Button>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  {selectedConv.participants.map((p) => {
+                    const name = resolveUserName(p.userId);
+                    const email = getUserEmail(p.userId);
+                    const userInfo = users.find((u) => u.id === p.userId);
+                    const isCurrentUser = p.userId === user?.id;
+                    return (
+                      <div
+                        key={p.id}
+                        className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-accent/50"
+                      >
+                        <Avatar className="h-8 w-8 shrink-0">
+                          <AvatarFallback className="text-[10px] bg-primary/10 text-primary">
+                            {getUserInitials(name)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {name}
+                            {isCurrentUser && (
+                              <span className="text-muted-foreground font-normal">
+                                {" "}
+                                (you)
+                              </span>
+                            )}
+                          </p>
+                          {email && (
+                            <p className="text-xs text-muted-foreground truncate">
+                              {email}
+                            </p>
+                          )}
+                        </div>
+                        {userInfo && (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] shrink-0"
+                          >
+                            {getRoleBadge(userInfo.role)}
+                          </Badge>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Leave button */}
+              <Button
+                variant="destructive"
+                className="w-full gap-2"
+                onClick={handleLeave}
+              >
+                <LogOut className="h-4 w-4" />
+                {t("chat.leave")}
+              </Button>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* ── Add Member Dialog ───────────────────────────────────────────── */}
+      <Dialog open={addMemberOpen} onOpenChange={setAddMemberOpen}>
+        <DialogContent className="max-w-[95vw] sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("chat.add_member")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 mt-1">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder={t("chat.search_users")}
+                value={addMemberSearch}
+                onChange={(e) => setAddMemberSearch(e.target.value)}
+                className="pl-9"
+                autoFocus
+              />
+            </div>
+            <div className="border rounded-lg max-h-[250px] overflow-y-auto">
+              {filteredAddMembers.length === 0 ? (
+                <div className="p-4 text-center text-sm text-muted-foreground">
+                  {t("chat.no_users")}
+                </div>
+              ) : (
+                filteredAddMembers.map((u) => (
+                  <div
+                    key={u.id}
+                    className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-accent/50 transition-colors"
+                    onClick={() => handleAddMember(u)}
+                  >
+                    <Avatar className="h-8 w-8 shrink-0">
+                      <AvatarFallback className="text-[10px] bg-primary/10 text-primary">
+                        {getUserInitials(u.name)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{u.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {u.email}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] shrink-0">
+                      {getRoleBadge(u.role)}
+                    </Badge>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Image Preview Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
+          onClick={() => setPreviewImage(null)}
+        >
+          <img
+            src={previewImage}
+            alt="Preview"
+            className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            className="absolute top-4 right-4 text-white/80 hover:text-white bg-black/40 rounded-full p-2 transition-colors"
+            onClick={() => setPreviewImage(null)}
+          >
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

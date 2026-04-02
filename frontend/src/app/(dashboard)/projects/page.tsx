@@ -42,6 +42,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/auth-context";
+import { useUsers } from "@/hooks/use-users";
+import { useLocale } from "@/contexts/locale-context";
+import { toast } from "@/components/ui/use-toast";
 
 interface Project {
   id: string;
@@ -56,101 +60,33 @@ interface Project {
   updated_at: string;
 }
 
-const statusConfig: Record<string, { label: string; className: string; dot: string }> = {
+const statusStyles: Record<string, { className: string; dot: string }> = {
   DRAFT: {
-    label: "Черновик",
     className: "bg-muted text-muted-foreground border-transparent",
     dot: "bg-muted-foreground",
   },
   ACTIVE: {
-    label: "Активен",
     className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20",
     dot: "bg-emerald-500",
   },
   ON_HOLD: {
-    label: "Приостановлен",
     className: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20",
     dot: "bg-amber-500",
   },
   COMPLETED: {
-    label: "Завершён",
     className: "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/20",
     dot: "bg-blue-500",
   },
   CANCELLED: {
-    label: "Отменён",
     className: "bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/20",
     dot: "bg-red-500",
   },
 };
 
-const mockProjects: Project[] = [
-  {
-    id: "1",
-    title: "Мобильное приложение для доставки",
-    description: "Кроссплатформенное мобильное приложение для сервиса доставки еды с отслеживанием заказов в реальном времени и интеграцией платёжных систем.",
-    status: "ACTIVE",
-    client_name: "ООО Рога и Копыта",
-    progress: 68,
-    task_count: 24,
-    done_count: 16,
-    deadline: "2026-05-15",
-    updated_at: "2026-03-24T10:30:00Z",
-  },
-  {
-    id: "2",
-    title: "CRM система для отдела продаж",
-    description: "Веб-приложение для управления клиентами, сделками и аналитикой продаж. Интеграция с телефонией и почтой.",
-    status: "ACTIVE",
-    client_name: "Startup Inc.",
-    progress: 45,
-    task_count: 18,
-    done_count: 8,
-    deadline: "2026-06-01",
-    updated_at: "2026-03-23T16:15:00Z",
-  },
-  {
-    id: "3",
-    title: "Редизайн корпоративного сайта",
-    description: "Полный редизайн и перенос корпоративного сайта на современный стек: Next.js, TypeScript, Tailwind CSS.",
-    status: "ON_HOLD",
-    client_name: "ТехКорп",
-    progress: 82,
-    task_count: 12,
-    done_count: 10,
-    deadline: "2026-04-20",
-    updated_at: "2026-03-22T09:00:00Z",
-  },
-  {
-    id: "4",
-    title: "API интеграция с платёжной системой",
-    description: "Разработка и интеграция платёжного шлюза, поддержка нескольких провайдеров, рекуррентные платежи.",
-    status: "ACTIVE",
-    client_name: "ФинТех Групп",
-    progress: 30,
-    task_count: 8,
-    done_count: 2,
-    deadline: "2026-07-10",
-    updated_at: "2026-03-21T14:45:00Z",
-  },
-  {
-    id: "5",
-    title: "Микросервис уведомлений",
-    description: "Сервис рассылки push-уведомлений, email и SMS. Поддержка шаблонов и очередей.",
-    status: "DRAFT",
-    client_name: "Внутренний проект",
-    progress: 5,
-    task_count: 3,
-    done_count: 0,
-    deadline: null,
-    updated_at: "2026-03-20T11:00:00Z",
-  },
-];
-
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return "Не указан";
+function formatDate(dateStr: string | null, t: (key: string) => string, locale: string = "ru"): string {
+  if (!dateStr) return t('common.not_set');
   try {
-    return new Date(dateStr).toLocaleDateString("ru-RU", {
+    return new Date(dateStr).toLocaleDateString(locale === "en" ? "en-US" : "ru-RU", {
       day: "numeric",
       month: "short",
       year: "numeric",
@@ -160,17 +96,17 @@ function formatDate(dateStr: string | null): string {
   }
 }
 
-function formatRelativeDate(dateStr: string): string {
+function formatRelativeDate(dateStr: string, t: (key: string) => string, locale: string = "ru"): string {
   try {
     const date = new Date(dateStr);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-    if (diffDays === 0) return "Сегодня";
-    if (diffDays === 1) return "Вчера";
-    if (diffDays < 7) return `${diffDays} дн. назад`;
-    return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+    if (diffDays === 0) return t('common.today');
+    if (diffDays === 1) return t('common.yesterday');
+    if (diffDays < 7) return `${diffDays} ${t('common.days_ago')}`;
+    return date.toLocaleDateString(locale === "en" ? "en-US" : "ru-RU", { day: "numeric", month: "short" });
   } catch {
     return dateStr;
   }
@@ -208,6 +144,9 @@ function ProjectCardSkeleton() {
 
 export default function ProjectsPage() {
   const router = useRouter();
+  const { user } = useAuth();
+  const { getUserName } = useUsers();
+  const { t } = useLocale();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -220,33 +159,37 @@ export default function ProjectsPage() {
   const [newTitle, setNewTitle] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newDeadline, setNewDeadline] = useState("");
-  const [newClientEmail, setNewClientEmail] = useState("");
 
   useEffect(() => {
     const fetchProjects = async () => {
       setLoading(true);
       try {
-        const data = await api.get<any[]>("/api/projects/");
+        const data = await api.get<any[]>("/api/projects/projects");
         if (data && data.length > 0) {
           setProjects(
             data.map((p) => ({
               id: p.id,
               title: p.title,
               description: p.description || "",
-              status: p.status || "ACTIVE",
-              client_name: p.client_name || "Не указан",
-              progress: p.progress || 0,
-              task_count: p.task_count || 0,
-              done_count: p.done_count || 0,
+              status: p.status || "DRAFT",
+              client_name: getUserName(p.clientId),
+              progress: (() => {
+                const tasks = p.tasks || [];
+                const total = tasks.length;
+                const done = tasks.filter((t: any) => t.status === "DONE").length;
+                return total > 0 ? Math.round((done / total) * 100) : 0;
+              })(),
+              task_count: (p.tasks || []).length,
+              done_count: (p.tasks || []).filter((t: any) => t.status === "DONE").length,
               deadline: p.deadline || null,
-              updated_at: p.updated_at || new Date().toISOString(),
+              updated_at: p.updatedAt || new Date().toISOString(),
             }))
           );
         } else {
-          setProjects(mockProjects);
+          setProjects([]);
         }
       } catch {
-        setProjects(mockProjects);
+        setProjects([]);
       } finally {
         setLoading(false);
       }
@@ -297,52 +240,40 @@ export default function ProjectsPage() {
     setCreating(true);
 
     try {
-      const newProject = await api.post<any>("/api/projects/", {
+      const newProject = await api.post<any>("/api/projects/projects", {
         title: newTitle,
         description: newDescription,
-        deadline: newDeadline || null,
-        client_email: newClientEmail || null,
+        deadline: newDeadline || undefined,
+        clientId: user?.id,
       });
 
       setProjects((prev) => [
         {
-          id: newProject.id || `temp-${Date.now()}`,
-          title: newTitle,
-          description: newDescription,
-          status: "DRAFT",
-          client_name: newClientEmail || "Не указан",
+          id: newProject.id,
+          title: newProject.title,
+          description: newProject.description || "",
+          status: newProject.status || "DRAFT",
+          client_name: getUserName(newProject.clientId),
           progress: 0,
           task_count: 0,
           done_count: 0,
-          deadline: newDeadline || null,
-          updated_at: new Date().toISOString(),
+          deadline: newProject.deadline || null,
+          updated_at: newProject.updatedAt || new Date().toISOString(),
         },
         ...prev,
       ]);
     } catch {
-      // Add locally for demo
-      setProjects((prev) => [
-        {
-          id: `temp-${Date.now()}`,
-          title: newTitle,
-          description: newDescription,
-          status: "DRAFT",
-          client_name: newClientEmail || "Не указан",
-          progress: 0,
-          task_count: 0,
-          done_count: 0,
-          deadline: newDeadline || null,
-          updated_at: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
+      toast({
+        title: t('common.error'),
+        description: t('common.error'),
+        variant: "destructive",
+      });
     } finally {
       setCreating(false);
       setDialogOpen(false);
       setNewTitle("");
       setNewDescription("");
       setNewDeadline("");
-      setNewClientEmail("");
     }
   };
 
@@ -354,63 +285,51 @@ export default function ProjectsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Проекты</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t('projects.title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {totalCount} проектов &middot; {activeCount} активных
+            {totalCount} {t('projects.title').toLowerCase()} &middot; {activeCount} {t('projects.active')}
           </p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button className="gap-2 shadow-sm">
               <Plus className="h-4 w-4" />
-              Новый проект
+              {t('projects.new')}
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>Создать проект</DialogTitle>
+              <DialogTitle>{t('projects.create_title')}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleCreateProject} className="space-y-4 mt-2">
               <div className="space-y-2">
-                <Label htmlFor="title">Название *</Label>
+                <Label htmlFor="title">{t('common.title')} *</Label>
                 <Input
                   id="title"
-                  placeholder="Название проекта"
+                  placeholder={t('projects.title_placeholder')}
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   required
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="description">Описание</Label>
+                <Label htmlFor="description">{t('common.description')}</Label>
                 <Textarea
                   id="description"
-                  placeholder="Краткое описание проекта..."
+                  placeholder={t('common.description') + '...'}
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
                   rows={3}
                 />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="deadline">Дедлайн</Label>
-                  <Input
-                    id="deadline"
-                    type="date"
-                    value={newDeadline}
-                    onChange={(e) => setNewDeadline(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="client">Email клиента</Label>
-                  <Input
-                    id="client"
-                    type="email"
-                    placeholder="client@example.com"
-                    value={newClientEmail}
-                    onChange={(e) => setNewClientEmail(e.target.value)}
-                  />
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="deadline">{t('common.deadline')}</Label>
+                <Input
+                  id="deadline"
+                  type="date"
+                  value={newDeadline}
+                  onChange={(e) => setNewDeadline(e.target.value)}
+                />
               </div>
               <DialogFooter className="pt-2">
                 <Button
@@ -418,10 +337,10 @@ export default function ProjectsPage() {
                   variant="outline"
                   onClick={() => setDialogOpen(false)}
                 >
-                  Отмена
+                  {t('common.cancel')}
                 </Button>
                 <Button type="submit" disabled={!newTitle.trim() || creating}>
-                  {creating ? "Создание..." : "Создать"}
+                  {creating ? t('ai.creating') : t('common.create')}
                 </Button>
               </DialogFooter>
             </form>
@@ -431,10 +350,10 @@ export default function ProjectsPage() {
 
       {/* Filters bar */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-md">
+        <div className="relative flex-1 sm:max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Поиск проектов..."
+            placeholder={t('projects.search')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9"
@@ -442,30 +361,27 @@ export default function ProjectsPage() {
         </div>
         <div className="flex gap-3">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Статус" />
+            <SelectTrigger className="flex-1 sm:flex-none sm:w-[160px]">
+              <SelectValue placeholder={t('common.status')} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Все статусы</SelectItem>
-              <SelectItem value="DRAFT">Черновик</SelectItem>
-              <SelectItem value="ACTIVE">Активен</SelectItem>
-              <SelectItem value="ON_HOLD">Приостановлен</SelectItem>
-              <SelectItem value="COMPLETED">Завершён</SelectItem>
-              <SelectItem value="CANCELLED">Отменён</SelectItem>
+              <SelectItem value="all">{t('projects.all_statuses')}</SelectItem>
+              <SelectItem value="DRAFT">{t('projects.status.draft')}</SelectItem>
+              <SelectItem value="ACTIVE">{t('projects.status.active')}</SelectItem>
+              <SelectItem value="ON_HOLD">{t('projects.status.on_hold')}</SelectItem>
+              <SelectItem value="COMPLETED">{t('projects.status.completed')}</SelectItem>
+              <SelectItem value="CANCELLED">{t('projects.status.cancelled')}</SelectItem>
             </SelectContent>
           </Select>
           <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="w-[160px]">
-              <div className="flex items-center gap-2">
-                <ArrowUpDown className="h-3.5 w-3.5" />
-                <SelectValue placeholder="Сортировка" />
-              </div>
+            <SelectTrigger className="flex-1 sm:flex-none sm:w-[160px]">
+              <SelectValue placeholder={t('projects.sort_by')} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="updated">По дате</SelectItem>
-              <SelectItem value="name">По имени</SelectItem>
-              <SelectItem value="status">По статусу</SelectItem>
-              <SelectItem value="progress">По прогрессу</SelectItem>
+              <SelectItem value="updated">{t('projects.sort.updated')}</SelectItem>
+              <SelectItem value="name">{t('projects.sort.name')}</SelectItem>
+              <SelectItem value="status">{t('projects.sort.status')}</SelectItem>
+              <SelectItem value="progress">{t('projects.sort.progress')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -485,28 +401,32 @@ export default function ProjectsPage() {
           </div>
           <h3 className="text-lg font-semibold mb-1">
             {searchQuery || statusFilter !== "all"
-              ? "Проекты не найдены"
-              : "Создайте первый проект"}
+              ? t('projects.not_found')
+              : t('projects.create_first')}
           </h3>
           <p className="text-sm text-muted-foreground text-center max-w-sm mb-4">
             {searchQuery || statusFilter !== "all"
-              ? "Попробуйте изменить параметры поиска или фильтрации"
-              : "Начните работу, создав ваш первый проект в DevSync"}
+              ? t('projects.try_change_search')
+              : t('projects.create_first_desc')}
           </p>
           {!searchQuery && statusFilter === "all" && (
             <Button onClick={() => setDialogOpen(true)} className="gap-2">
               <Plus className="h-4 w-4" />
-              Создать проект
+              {t('projects.create_title')}
             </Button>
           )}
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filteredProjects.map((project) => {
-            const config = statusConfig[project.status] || {
-              label: project.status,
+            const style = statusStyles[project.status] || {
               className: "bg-muted text-muted-foreground border-transparent",
               dot: "bg-muted-foreground",
+            };
+            const config = {
+              label: t(`projects.status.${project.status.toLowerCase()}`),
+              className: style.className,
+              dot: style.dot,
             };
             const progressPercent =
               project.task_count > 0
@@ -540,22 +460,22 @@ export default function ProjectsPage() {
                 </CardHeader>
 
                 <CardContent className="flex-1 pb-4 space-y-3">
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <Users className="h-3.5 w-3.5" />
-                      {project.client_name}
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground truncate">
+                    <span className="flex items-center gap-1.5 truncate">
+                      <Users className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{project.client_name}</span>
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1.5">
-                      <ListTodo className="h-3.5 w-3.5" />
-                      {project.done_count}/{project.task_count} задач
+                      <ListTodo className="h-3.5 w-3.5 shrink-0" />
+                      {project.done_count}/{project.task_count} {t('dashboard.tasks_count')}
                     </span>
                     {project.deadline && (
                       <span className="flex items-center gap-1.5">
                         <CalendarDays className="h-3.5 w-3.5" />
-                        {formatDate(project.deadline)}
+                        {formatDate(project.deadline, t)}
                       </span>
                     )}
                   </div>
@@ -563,7 +483,7 @@ export default function ProjectsPage() {
                   {/* Progress */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Прогресс</span>
+                      <span className="text-xs text-muted-foreground">{t('common.progress')}</span>
                       <span className="text-xs font-medium">{progressPercent}%</span>
                     </div>
                     <Progress value={progressPercent} className="h-1.5" />
@@ -571,7 +491,7 @@ export default function ProjectsPage() {
                 </CardContent>
 
                 <CardFooter className="pt-3 border-t text-xs text-muted-foreground">
-                  Обновлён {formatRelativeDate(project.updated_at)}
+                  {t('common.updated')} {formatRelativeDate(project.updated_at, t)}
                 </CardFooter>
               </Card>
             );

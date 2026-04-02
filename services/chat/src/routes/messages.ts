@@ -120,6 +120,40 @@ router.post('/:id/messages', asyncHandler(async (req: Request, res: Response): P
     io.to(id).emit('new_message', message);
   }
 
+  // Parse @mentions
+  const mentionRegex = /@(\S+)/g;
+  const mentions = [...parsed.content.matchAll(mentionRegex)].map(m => m[1]);
+  if (mentions.length > 0) {
+    try {
+      const authUrl = process.env.AUTH_SERVICE_URL || 'http://auth:3001';
+      const usersResp = await fetch(`${authUrl}/users`);
+      if (usersResp.ok) {
+        const { users } = await usersResp.json() as { users: { id: string; name: string; email: string }[] };
+        // Publish notifications via Redis
+        const Redis = require('ioredis');
+        const publisher = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+        for (const mention of mentions) {
+          const mentionLower = mention.toLowerCase();
+          const matched = users.find(u =>
+            u.name.toLowerCase() === mentionLower ||
+            u.email.toLowerCase() === mentionLower ||
+            u.name.toLowerCase().split(' ').some((part: string) => part === mentionLower)
+          );
+          if (matched && matched.id !== parsed.senderId) {
+            await publisher.publish('notifications', JSON.stringify({
+              userId: matched.id,
+              type: 'MESSAGE_RECEIVED',
+              title: 'Вас упомянули в чате',
+              body: parsed.content.slice(0, 100),
+              priority: 'HIGH',
+            }));
+          }
+        }
+        publisher.disconnect();
+      }
+    } catch {}
+  }
+
   res.status(201).json(message);
 }));
 
@@ -199,7 +233,7 @@ router.post('/:conversationId/messages/:id/translate', asyncHandler(async (req: 
   }
 
   // Call AI service for translation
-  const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://ai-service:3005';
+  const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://ai:3004';
   const response = await fetch(`${aiServiceUrl}/translate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

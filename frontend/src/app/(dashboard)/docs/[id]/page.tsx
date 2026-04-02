@@ -21,6 +21,7 @@ import {
   X,
   GitBranch,
   Zap,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -137,7 +138,7 @@ export default function DocPage() {
   const [editChangelog, setEditChangelog] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
 
-  const [showVersions, setShowVersions] = useState(false);
+  const [showVersions, setShowVersions] = useState(true);
   const [showTaskLinks, setShowTaskLinks] = useState(true);
   const [showMeetings, setShowMeetings] = useState(true);
 
@@ -400,17 +401,37 @@ export default function DocPage() {
               {showVersions ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             </button>
             {showVersions && (
-              <div className="border-t divide-y max-h-64 overflow-y-auto">
+              <div className="border-t divide-y max-h-72 overflow-y-auto">
                 {doc.versions.map(v => (
                   <div key={v.id} className="p-3 space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">v{v.version}</span>
-                      {v.meetingId && (
-                        <Badge variant="outline" className="text-xs">
-                          <Video className="h-3 w-3 mr-1" />
-                          Встреча
-                        </Badge>
-                      )}
+                      <span className={`text-sm font-medium ${v.version === currentVersion ? "text-primary" : ""}`}>
+                        v{v.version} {v.version === currentVersion && <span className="text-xs font-normal text-muted-foreground ml-1">текущая</span>}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {v.meetingId && (
+                          <Badge variant="outline" className="text-xs">
+                            <Video className="h-3 w-3 mr-1" />
+                            Встреча
+                          </Badge>
+                        )}
+                        {canEdit && v.version !== currentVersion && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                              setEditTitle(v.title);
+                              setEditContent(contentToText(v.content));
+                              setEditChangelog(`Восстановлена версия v${v.version}`);
+                              setHasChanges(true);
+                            }}
+                            title="Восстановить эту версию"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     {v.changelog && (
                       <p className="text-xs text-muted-foreground">{v.changelog}</p>

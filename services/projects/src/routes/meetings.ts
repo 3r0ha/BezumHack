@@ -55,11 +55,13 @@ meetingsRouter.post("/", asyncHandler(async (req, res) => {
       participants: participants || [organizerId],
       slots: slots && slots.length > 0
         ? {
-            create: (slots as Array<{ startTime: string; endTime: string }>).map(s => ({
-              startTime: new Date(s.startTime),
-              endTime: new Date(s.endTime),
-              votes: [organizerId],
-            })),
+            create: (slots as Array<{ startTime: string; endTime: string }>)
+              .filter(s => s.startTime && s.endTime && new Date(s.startTime) < new Date(s.endTime))
+              .map(s => ({
+                startTime: new Date(s.startTime),
+                endTime: new Date(s.endTime),
+                votes: [organizerId],
+              })),
           }
         : undefined,
       documents: documentIds && documentIds.length > 0
@@ -260,7 +262,13 @@ meetingsRouter.post("/:id/summarize", asyncHandler(async (req, res) => {
 
     if (!aiRes.ok) throw new Error("AI service error");
 
-    const aiData = await aiRes.json() as { summary: string; action_items: string[] };
+    const aiData = await aiRes.json() as {
+      summary: string;
+      decisions: string[];
+      action_items: Array<{ owner: string; action: string; deadline: string | null }>;
+      open_questions: string[];
+      mock: boolean;
+    };
 
     const updated = await prisma.meeting.update({
       where: { id: meeting.id },
@@ -278,7 +286,13 @@ meetingsRouter.post("/:id/summarize", asyncHandler(async (req, res) => {
       });
     }
 
-    res.json({ meeting: updated, actionItems: aiData.action_items });
+    res.json({
+      meeting: updated,
+      decisions: aiData.decisions,
+      actionItems: aiData.action_items,
+      openQuestions: aiData.open_questions,
+      mock: aiData.mock,
+    });
   } catch (err) {
     // Fallback mock summary
     const mockSummary = `[Автосуммаризация] Встреча «${meeting.title}» завершена. На встрече обсуждались ключевые вопросы по проекту. Требуется дальнейшее следование принятым решениям.`;

@@ -25,4 +25,4 @@ COPY --from=builder /app/package.json ./
 
 EXPOSE 3003
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/index.js"]

@@ -28,6 +28,7 @@ import {
   Search,
   FileText,
   CalendarCheck,
+  Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -48,6 +49,7 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from "@/components/ui/tooltip";
+import { io } from "socket.io-client";
 import { useAuth } from "@/contexts/auth-context";
 import { useTheme } from "@/contexts/theme-context";
 import { useLocale } from "@/contexts/locale-context";
@@ -71,6 +73,7 @@ function useNavItems() {
     { href: "/approvals", label: t('nav.approvals'), icon: CheckSquare, roles: ["CLIENT", "MANAGER"] },
     { href: "/billing", label: t('nav.billing'), icon: Receipt, roles: ["MANAGER"] },
     { href: "/analytics", label: t('nav.analytics'), icon: TrendingUp, roles: ["MANAGER"] },
+    { href: "/admin", label: t('nav.admin'), icon: Shield, roles: ["MANAGER"] },
   ];
 
   return all.filter(item => item.roles.includes(role));
@@ -93,6 +96,7 @@ function usePageTitle(pathname: string): string {
     "/meetings": "Встречи",
     "/search": t('nav.search'),
     "/settings": t('nav.settings'),
+    "/admin": t('nav.admin'),
   };
   if (pageTitles[pathname]) return pageTitles[pathname];
   if (pathname.startsWith("/projects/")) return t('nav.projects');
@@ -145,11 +149,11 @@ function SidebarContent({ collapsed, pathname, onNavigate, user }: SidebarConten
           onClick={onNavigate}
         >
           <div className="h-7 w-7 rounded-lg gradient-bg flex items-center justify-center shrink-0 group-hover:glow transition-shadow">
-            <span className="text-white font-bold text-xs">S</span>
+            <span className="text-white font-bold text-xs">E</span>
           </div>
           {!collapsed && (
             <span className="text-[15px] font-semibold tracking-tight whitespace-nowrap">
-              Seamless
+              Envelope
             </span>
           )}
         </Link>
@@ -258,30 +262,51 @@ function SidebarContent({ collapsed, pathname, onNavigate, user }: SidebarConten
 
 function NotificationsDropdown() {
   const { t } = useLocale();
+  const { user } = useAuth();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    const loadNotifications = async () => {
-      try {
-        const data = await api.get<any>("/api/notifications/notifications?limit=10");
-        if (data?.notifications) {
-          setNotifications(data.notifications);
-          setUnreadCount(data.unreadCount || 0);
-        }
-      } catch {
-        // Fallback
-        setUnreadCount(3);
-        setNotifications([
-          { id: "1", title: "Задача назначена", body: "Вам назначена задача 'Разработка API'", read: false, createdAt: new Date().toISOString(), type: "TASK_ASSIGNED" },
-          { id: "2", title: "Блокер разрешён", body: "Задача 'Проектирование БД' завершена, ваша задача разблокирована", read: false, createdAt: new Date().toISOString(), type: "BLOCKER_RESOLVED" },
-          { id: "3", title: "Дедлайн приближается", body: "До дедлайна проекта 'CRM система' осталось 3 дня", read: false, createdAt: new Date().toISOString(), type: "DEADLINE_APPROACHING" },
-        ]);
+  const loadNotifications = async () => {
+    try {
+      const data = await api.get<any>("/api/notifications/notifications?limit=20");
+      if (data?.notifications) {
+        setNotifications(data.notifications);
+        setUnreadCount(data.unreadCount || 0);
       }
-    };
+    } catch {}
+  };
+
+  // Initial load + periodic refresh
+  useEffect(() => {
     loadNotifications();
+    const interval = setInterval(loadNotifications, 30000);
+    return () => clearInterval(interval);
   }, []);
+
+  // Real-time via notifications socket
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    if (!token || !user) return;
+
+    const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL || "";
+    const socket = io(SOCKET_URL, {
+      path: "/notifications-ws/",
+      auth: { token },
+      transports: ["websocket", "polling"],
+      reconnectionAttempts: 5,
+    });
+
+    socket.on("notification", (notif: any) => {
+      setNotifications((prev) => {
+        if (prev.find((n) => n.id === notif.id)) return prev;
+        return [notif, ...prev].slice(0, 20);
+      });
+      setUnreadCount((c) => c + 1);
+    });
+
+    return () => { socket.disconnect(); };
+  }, [user?.id]);
 
   const handleMarkAllRead = async () => {
     try {
@@ -289,6 +314,18 @@ function NotificationsDropdown() {
     } catch {}
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     setUnreadCount(0);
+  };
+
+  const handleNotificationClick = async (n: any) => {
+    if (!n.read) {
+      try {
+        await api.patch(`/api/notifications/notifications/${n.id}/read`);
+      } catch {}
+      setNotifications((prev) =>
+        prev.map((item) => (item.id === n.id ? { ...item, read: true } : item))
+      );
+      setUnreadCount((c) => Math.max(0, c - 1));
+    }
   };
 
   const typeIcons: Record<string, string> = {
@@ -341,6 +378,7 @@ function NotificationsDropdown() {
                 className={`flex items-start gap-3 px-4 py-3 cursor-pointer ${
                   !n.read ? "bg-accent/50" : ""
                 }`}
+                onClick={() => handleNotificationClick(n)}
               >
                 <div
                   className={`h-2 w-2 rounded-full mt-1.5 shrink-0 ${
@@ -352,7 +390,13 @@ function NotificationsDropdown() {
                   <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
                     {n.body}
                   </p>
+                  <p className="text-[10px] text-muted-foreground/60 mt-1">
+                    {new Date(n.createdAt).toLocaleString("ru", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </p>
                 </div>
+                {!n.read && (
+                  <div className="h-1.5 w-1.5 rounded-full bg-primary shrink-0 mt-2" />
+                )}
               </DropdownMenuItem>
             ))
           )}
@@ -424,18 +468,20 @@ export default function DashboardLayout({
     if (isLoading || !user) return;
     const role = user.role;
     const restricted: Record<string, string[]> = {
+      "/dashboard": ["DEVELOPER", "MANAGER"],
       "/projects": ["DEVELOPER", "MANAGER"],
       "/gantt": ["DEVELOPER", "MANAGER"],
       "/boards": ["DEVELOPER", "MANAGER"],
       "/ai": ["DEVELOPER", "MANAGER"],
       "/billing": ["MANAGER"],
       "/analytics": ["MANAGER"],
+      "/admin": ["MANAGER"],
       "/settings/api": ["DEVELOPER", "MANAGER"],
       "/settings/webhooks": ["DEVELOPER", "MANAGER"],
     };
     for (const [path, roles] of Object.entries(restricted)) {
       if (pathname.startsWith(path) && !roles.includes(role)) {
-        router.replace("/dashboard");
+        router.replace(role === "CLIENT" ? "/client-portal" : "/dashboard");
         return;
       }
     }

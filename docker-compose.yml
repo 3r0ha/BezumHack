@@ -108,6 +108,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:-platform_secret}@postgres:5432/notifications_db
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-8711209666:AAEHh9iUp59wOX__pLBgXIeM4LeFnP7c9B8}
+      AUTH_SERVICE_URL: http://auth:3001
     depends_on:
       - postgres
       - redis

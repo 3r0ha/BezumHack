@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,18 +26,15 @@ import {
 } from "lucide-react";
 
 interface FormErrors {
-  name?: string;
   email?: string;
   password?: string;
-  role?: string;
 }
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const { login, register, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { login, register, user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const defaultTab = searchParams.get("tab") === "register" ? "register" : "login";
+  const [activeTab, setActiveTab] = useState("login");
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("");
@@ -46,21 +43,12 @@ export default function LoginPage() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
 
-  // Register form state
-  const [regName, setRegName] = useState("");
-  const [regEmail, setRegEmail] = useState("");
-  const [regPassword, setRegPassword] = useState("");
-  const [regRole, setRegRole] = useState("developer");
-  const [regErrors, setRegErrors] = useState<FormErrors>({});
-  const [regLoading, setRegLoading] = useState(false);
-  const [regError, setRegError] = useState("");
-
   // Redirect if already authenticated
   useEffect(() => {
-    if (isAuthenticated) {
-      router.push("/dashboard");
+    if (!authLoading && isAuthenticated && user) {
+      router.replace(user.role === "CLIENT" ? "/client-portal" : "/dashboard");
     }
-  }, [isAuthenticated, router]);
+  }, [authLoading, isAuthenticated, user, router]);
 
   const validateEmail = (email: string): boolean => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -88,53 +76,14 @@ export default function LoginPage() {
 
     setLoginLoading(true);
     try {
-      await login(loginEmail, loginPassword);
-      router.push("/dashboard");
+      const loggedUser = await login(loginEmail, loginPassword);
+      router.replace(loggedUser.role === "CLIENT" ? "/client-portal" : "/dashboard");
     } catch (err) {
       setLoginError(
         err instanceof Error ? err.message : "Ошибка входа. Проверьте данные."
       );
     } finally {
       setLoginLoading(false);
-    }
-  };
-
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRegError("");
-    const errors: FormErrors = {};
-
-    if (!regName.trim()) {
-      errors.name = "Введите имя";
-    }
-
-    if (!regEmail.trim()) {
-      errors.email = "Введите email";
-    } else if (!validateEmail(regEmail)) {
-      errors.email = "Некорректный формат email";
-    }
-
-    if (!regPassword) {
-      errors.password = "Введите пароль";
-    } else if (regPassword.length < 6) {
-      errors.password = "Минимум 6 символов";
-    }
-
-    setRegErrors(errors);
-    if (Object.keys(errors).length > 0) return;
-
-    setRegLoading(true);
-    try {
-      await register(regEmail, regPassword, regName, regRole);
-      router.push("/dashboard");
-    } catch (err) {
-      setRegError(
-        err instanceof Error
-          ? err.message
-          : "Ошибка регистрации. Попробуйте снова."
-      );
-    } finally {
-      setRegLoading(false);
     }
   };
 
@@ -175,7 +124,7 @@ export default function LoginPage() {
             <div className="h-9 w-9 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center border border-white/20">
               <Zap className="h-5 w-5 text-white" />
             </div>
-            <span className="text-2xl font-bold tracking-tight">DevSync</span>
+            <span className="text-2xl font-bold tracking-tight">Envelope</span>
           </div>
 
           {/* Main messaging */}
@@ -189,8 +138,8 @@ export default function LoginPage() {
                 <span className="text-blue-200">эффективнее</span>
               </h2>
               <p className="mt-4 text-base text-blue-100/80 leading-relaxed max-w-sm">
-                Единая платформа для прозрачной работы между заказчиками
-                и командами разработки
+                Внутренняя платформа студии — задачи, документы, встречи
+                и CI/CD в одном месте
               </p>
             </div>
 
@@ -199,15 +148,15 @@ export default function LoginPage() {
               {[
                 {
                   icon: LayoutDashboard,
-                  text: "Канбан-доски и графы зависимостей",
+                  text: "Kanban + спринты + CI/CD интеграция",
                 },
                 {
                   icon: MessageSquare,
-                  text: "Чат с AI-переводом",
+                  text: "Документы с версиями и встречи с AI-итогами",
                 },
                 {
                   icon: Shield,
-                  text: "Ролевой доступ к проектам",
+                  text: "Ролевой доступ: менеджер / разработчик / клиент",
                 },
               ].map((item, i) => (
                 <div
@@ -226,17 +175,17 @@ export default function LoginPage() {
           {/* Testimonial */}
           <div className="rounded-2xl bg-white/10 backdrop-blur-sm p-6 border border-white/10">
             <p className="text-sm leading-relaxed text-blue-50/90 italic">
-              &ldquo;DevSync полностью изменил наш подход к работе с клиентами.
-              Прозрачность проекта выросла на порядок, а количество
-              ненужных созвонов сократилось в три раза.&rdquo;
+              &ldquo;Один инструмент вместо Jira + Notion + Slack + Zoom.
+              Документы, задачи, встречи и CI/CD — всё синхронизировано
+              автоматически.&rdquo;
             </p>
             <div className="mt-4 flex items-center gap-3">
               <div className="h-9 w-9 rounded-full bg-blue-400/30 flex items-center justify-center text-sm font-semibold text-white border border-white/20">
-                АС
+                АВ
               </div>
               <div>
-                <p className="text-sm font-medium text-white">Алексей Смирнов</p>
-                <p className="text-xs text-blue-200/70">CTO, TechVision Studio</p>
+                <p className="text-sm font-medium text-white">Артём Волков</p>
+                <p className="text-xs text-blue-200/70">Project Manager, Envelope Studio</p>
               </div>
             </div>
           </div>
@@ -257,20 +206,19 @@ export default function LoginPage() {
                 <Zap className="h-5 w-5 text-white" />
               </div>
               <span className="text-2xl font-bold tracking-tight">
-                Dev<span className="gradient-text">Sync</span>
+                <span className="gradient-text">Envelope</span>
               </span>
             </Link>
             <p className="mt-2 text-sm text-muted-foreground">
-              Платформа для студий разработки
+              Внутренняя платформа студии
             </p>
           </div>
 
           <Card className="border-border/50 shadow-smooth-lg bg-card/80 backdrop-blur-sm">
-            <Tabs defaultValue={defaultTab}>
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
               <CardHeader className="pb-4">
-                <TabsList className="w-full grid grid-cols-2">
-                  <TabsTrigger value="login">Вход</TabsTrigger>
-                  <TabsTrigger value="register">Регистрация</TabsTrigger>
+                <TabsList className="w-full">
+                  <TabsTrigger value="login" className="w-full">Вход</TabsTrigger>
                 </TabsList>
               </CardHeader>
 
@@ -281,7 +229,7 @@ export default function LoginPage() {
                     <div className="space-y-1">
                       <CardTitle className="text-xl">С возвращением</CardTitle>
                       <CardDescription>
-                        Войдите в свой аккаунт DevSync
+                        Войдите в свой аккаунт Envelope
                       </CardDescription>
                     </div>
 
@@ -321,12 +269,9 @@ export default function LoginPage() {
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <Label htmlFor="login-password">Пароль</Label>
-                        <Link
-                          href="#"
-                          className="text-xs text-muted-foreground hover:text-primary transition-colors"
-                        >
-                          Забыли пароль?
-                        </Link>
+                        <span className="text-xs text-muted-foreground">
+                          Обратитесь к администратору
+                        </span>
                       </div>
                       <Input
                         id="login-password"
@@ -379,142 +324,29 @@ export default function LoginPage() {
                 </form>
               </TabsContent>
 
-              {/* ====== REGISTER TAB ====== */}
+              {/* Register tab redirects to login — accounts are created by admin */}
               <TabsContent value="register">
-                <form onSubmit={handleRegister}>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-1">
-                      <CardTitle className="text-xl">Создать аккаунт</CardTitle>
-                      <CardDescription>
-                        Начните работу с DevSync за минуту
-                      </CardDescription>
-                    </div>
-
-                    {regError && (
-                      <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
-                        {regError}
-                      </div>
-                    )}
-
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-name">Имя</Label>
-                      <Input
-                        id="reg-name"
-                        type="text"
-                        placeholder="Ваше имя"
-                        value={regName}
-                        onChange={(e) => {
-                          setRegName(e.target.value);
-                          if (regErrors.name) {
-                            setRegErrors((prev) => ({ ...prev, name: undefined }));
-                          }
-                        }}
-                        className={
-                          regErrors.name
-                            ? "border-destructive focus-visible:ring-destructive"
-                            : ""
-                        }
-                        autoComplete="name"
-                      />
-                      {regErrors.name && (
-                        <p className="text-xs text-destructive mt-1">
-                          {regErrors.name}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-email">Email</Label>
-                      <Input
-                        id="reg-email"
-                        type="email"
-                        placeholder="you@example.com"
-                        value={regEmail}
-                        onChange={(e) => {
-                          setRegEmail(e.target.value);
-                          if (regErrors.email) {
-                            setRegErrors((prev) => ({ ...prev, email: undefined }));
-                          }
-                        }}
-                        className={
-                          regErrors.email
-                            ? "border-destructive focus-visible:ring-destructive"
-                            : ""
-                        }
-                        autoComplete="email"
-                      />
-                      {regErrors.email && (
-                        <p className="text-xs text-destructive mt-1">
-                          {regErrors.email}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-password">Пароль</Label>
-                      <Input
-                        id="reg-password"
-                        type="password"
-                        placeholder="Минимум 6 символов"
-                        value={regPassword}
-                        onChange={(e) => {
-                          setRegPassword(e.target.value);
-                          if (regErrors.password) {
-                            setRegErrors((prev) => ({
-                              ...prev,
-                              password: undefined,
-                            }));
-                          }
-                        }}
-                        className={
-                          regErrors.password
-                            ? "border-destructive focus-visible:ring-destructive"
-                            : ""
-                        }
-                        autoComplete="new-password"
-                      />
-                      {regErrors.password && (
-                        <p className="text-xs text-destructive mt-1">
-                          {regErrors.password}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-role">Роль</Label>
-                      <select
-                        id="reg-role"
-                        value={regRole}
-                        onChange={(e) => setRegRole(e.target.value)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 appearance-none cursor-pointer"
-                      >
-                        <option value="client">Клиент</option>
-                        <option value="developer">Разработчик</option>
-                        <option value="manager">Менеджер</option>
-                      </select>
-                    </div>
-                  </CardContent>
-
-                  <CardFooter className="flex-col gap-4">
-                    <Button
-                      type="submit"
-                      className="w-full h-11 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 border-0 text-white shadow-lg shadow-blue-500/20 transition-all duration-300"
-                      disabled={regLoading}
-                    >
-                      {regLoading ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Регистрация...
-                        </>
-                      ) : (
-                        <>
-                          Зарегистрироваться
-                          <ArrowRight className="ml-2 h-4 w-4" />
-                        </>
-                      )}
-                    </Button>
-                  </CardFooter>
-                </form>
+                <CardContent className="space-y-4 py-6">
+                  <div className="space-y-1">
+                    <CardTitle className="text-xl">Доступ закрытый</CardTitle>
+                    <CardDescription>
+                      Аккаунты создаются администратором платформы
+                    </CardDescription>
+                  </div>
+                  <div className="rounded-lg bg-muted/50 border border-border px-4 py-4 text-sm text-muted-foreground space-y-2">
+                    <p>Envelope — внутренняя платформа студии. Самостоятельная регистрация недоступна.</p>
+                    <p>Обратитесь к менеджеру проекта для получения доступа.</p>
+                  </div>
+                </CardContent>
+                <CardFooter>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setActiveTab("login")}
+                  >
+                    Перейти к входу
+                  </Button>
+                </CardFooter>
               </TabsContent>
             </Tabs>
           </Card>

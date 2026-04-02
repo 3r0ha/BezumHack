@@ -1,0 +1,52 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum NotificationType {
+  TASK_ASSIGNED
+  TASK_STATUS_CHANGED
+  TASK_COMMENT
+  BLOCKER_RESOLVED
+  DEADLINE_APPROACHING
+  APPROVAL_REQUESTED
+  APPROVAL_REVIEWED
+  INVOICE_ISSUED
+  MESSAGE_RECEIVED
+  PROJECT_UPDATE
+  MEETING_INVITED
+  MEETING_SCHEDULED
+  MEETING_SUMMARY_READY
+  DOCUMENT_REVIEW_REQUESTED
+  DOCUMENT_LINKED
+  DOCUMENT_APPROVED
+  CICD_STATUS_CHANGED
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Notification {
+  id         String               @id @default(uuid())
+  userId     String
+  type       NotificationType
+  priority   NotificationPriority @default(MEDIUM)
+  title      String
+  body       String
+  link       String?
+  read       Boolean              @default(false)
+  readAt     DateTime?
+  metadata   Json?
+  createdAt  DateTime             @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+}

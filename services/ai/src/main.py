@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Seamless AI Service",
+    title="Envelope AI Service",
     description="AI-powered endpoints: summarize, translate, estimate, autopilot, analytics, risk-matrix, weekly-report",
     version="2.0.0",
 )

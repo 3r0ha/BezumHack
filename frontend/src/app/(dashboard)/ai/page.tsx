@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   Brain,
   FileText,
@@ -11,7 +12,10 @@ import {
   Sparkles,
   Copy,
   Check,
+  Rocket,
+  ArrowRight,
 } from "lucide-react";
+import { useLocale } from "@/contexts/locale-context";
 
 // --- Types ---
 
@@ -32,46 +36,6 @@ interface EstimateResult {
   suggested_subtasks: string[];
 }
 
-// --- Mock data ---
-
-const MOCK_SUMMARY: SummarizeResult = {
-  summary:
-    "Разработка мобильного приложения для сервиса доставки еды. Приложение должно поддерживать iOS и Android, включать систему отслеживания заказов в реальном времени, интеграцию с платёжными системами и push-уведомления.",
-  key_points: [
-    "Кроссплатформенная разработка (React Native)",
-    "Интеграция с Stripe и ЮKassa для платежей",
-    "WebSocket для отслеживания курьера в реальном времени",
-    "Push-уведомления через Firebase",
-    "Срок: 3 месяца, бюджет: 2.5 млн руб",
-    "MVP к 15 апреля — только заказ и оплата",
-  ],
-};
-
-const MOCK_TRANSLATE: TranslateResult = {
-  translated_text:
-    "We need to develop a mobile application for a food delivery service with real-time order tracking.",
-  detected_language: "Russian",
-};
-
-const MOCK_ESTIMATE: EstimateResult = {
-  complexity: "high",
-  estimated_hours: 320,
-  reasoning:
-    "Проект включает кроссплатформенную мобильную разработку, интеграцию с несколькими внешними сервисами (платежи, карты, уведомления), real-time функциональность через WebSocket, а также серверную часть с API.",
-  suggested_subtasks: [
-    "Настройка проекта React Native + навигация",
-    "Экран авторизации и регистрации",
-    "Каталог ресторанов и меню",
-    "Корзина и оформление заказа",
-    "Интеграция платёжных систем",
-    "Real-time отслеживание курьера на карте",
-    "Push-уведомления",
-    "Админ-панель для ресторанов",
-    "API: заказы, пользователи, рестораны",
-    "Тестирование и деплой",
-  ],
-};
-
 // --- Components ---
 
 const complexityColors: Record<string, string> = {
@@ -82,15 +46,18 @@ const complexityColors: Record<string, string> = {
   critical: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
 };
 
-const complexityLabels: Record<string, string> = {
-  low: "Низкая",
-  medium: "Средняя",
-  high: "Высокая",
-  critical: "Критическая",
-};
+function getComplexityLabels(t: (key: string) => string): Record<string, string> {
+  return {
+    low: t('ai.complexity.low'),
+    medium: t('ai.complexity.medium'),
+    high: t('ai.complexity.high'),
+    critical: t('ai.complexity.critical'),
+  };
+}
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const { t } = useLocale();
 
   const handleCopy = () => {
     navigator.clipboard.writeText(text);
@@ -104,12 +71,13 @@ function CopyButton({ text }: { text: string }) {
       className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
     >
       {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-      {copied ? "Скопировано" : "Копировать"}
+      {copied ? t('common.copied') : t('common.copy')}
     </button>
   );
 }
 
 export default function AIAssistantPage() {
+  const { t } = useLocale();
   const [activeTab, setActiveTab] = useState<
     "summarize" | "translate" | "estimate"
   >("summarize");
@@ -140,7 +108,7 @@ export default function AIAssistantPage() {
     setSummarizeLoading(true);
     setSummarizeResult(null);
     try {
-      const res = await fetch("/api/ai/summarize", {
+      const res = await fetch("/api/ai/summarize/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: summarizeText }),
@@ -152,8 +120,8 @@ export default function AIAssistantPage() {
       }
     } catch {
       // Fallback to mock
-      await new Promise((r) => setTimeout(r, 1500));
-      setSummarizeResult(MOCK_SUMMARY);
+      
+      setSummarizeResult(null);
     } finally {
       setSummarizeLoading(false);
     }
@@ -164,7 +132,7 @@ export default function AIAssistantPage() {
     setTranslateLoading(true);
     setTranslateResult(null);
     try {
-      const res = await fetch("/api/ai/translate", {
+      const res = await fetch("/api/ai/translate/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -178,8 +146,8 @@ export default function AIAssistantPage() {
         throw new Error();
       }
     } catch {
-      await new Promise((r) => setTimeout(r, 1000));
-      setTranslateResult(MOCK_TRANSLATE);
+      
+      setTranslateResult(null);
     } finally {
       setTranslateLoading(false);
     }
@@ -190,7 +158,7 @@ export default function AIAssistantPage() {
     setEstimateLoading(true);
     setEstimateResult(null);
     try {
-      const res = await fetch("/api/ai/estimate", {
+      const res = await fetch("/api/ai/estimate/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -204,8 +172,8 @@ export default function AIAssistantPage() {
         throw new Error();
       }
     } catch {
-      await new Promise((r) => setTimeout(r, 2000));
-      setEstimateResult(MOCK_ESTIMATE);
+      
+      setEstimateResult(null);
     } finally {
       setEstimateLoading(false);
     }
@@ -214,13 +182,13 @@ export default function AIAssistantPage() {
   const tabs = [
     {
       id: "summarize" as const,
-      label: "Суммаризация ТЗ",
+      label: t('ai.summarize'),
       icon: FileText,
     },
-    { id: "translate" as const, label: "Переводчик", icon: Languages },
+    { id: "translate" as const, label: t('ai.translate'), icon: Languages },
     {
       id: "estimate" as const,
-      label: "Оценка задачи",
+      label: t('ai.estimate'),
       icon: ListChecks,
     },
   ];
@@ -234,27 +202,46 @@ export default function AIAssistantPage() {
             <Brain className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">AI Ассистент</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{t('ai.title')}</h1>
             <p className="text-sm text-muted-foreground">
-              Инструменты на базе нейросети для ускорения работы
+              {t('ai.subtitle')}
             </p>
           </div>
         </div>
       </div>
 
+      {/* Autopilot Banner */}
+      <Link
+        href="/ai/autopilot"
+        className="group flex items-center gap-3 sm:gap-4 rounded-xl border-2 border-dashed border-primary/30 bg-primary/5 p-4 sm:p-5 hover:border-primary/50 hover:bg-primary/10 transition-all"
+      >
+        <div className="flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-red-600 text-white shrink-0">
+          <Rocket className="h-5 w-5 sm:h-6 sm:w-6" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-base sm:text-lg group-hover:text-primary transition-colors">
+            {t('ai.autopilot')}
+          </p>
+          <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2">
+            {t('ai.autopilot_desc')}
+          </p>
+        </div>
+        <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all hidden sm:block" />
+      </Link>
+
       {/* Tabs */}
-      <div className="flex gap-1 rounded-lg bg-muted p-1">
+      <div className="flex gap-1 rounded-lg bg-muted p-1 overflow-x-auto">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all ${
+            className={`flex items-center gap-2 rounded-md px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${
               activeTab === tab.id
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            <tab.icon className="h-4 w-4" />
+            <tab.icon className="h-4 w-4 shrink-0" />
             {tab.label}
           </button>
         ))}
@@ -262,35 +249,35 @@ export default function AIAssistantPage() {
 
       {/* Summarize Tab */}
       {activeTab === "summarize" && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
           <div className="space-y-4">
-            <div className="rounded-lg border bg-card p-6">
+            <div className="rounded-lg border bg-card p-4 sm:p-6">
               <h3 className="font-semibold mb-3 flex items-center gap-2">
                 <FileText className="h-4 w-4" />
-                Текст ТЗ
+                {t('ai.source_tz')}
               </h3>
               <textarea
                 value={summarizeText}
                 onChange={(e) => setSummarizeText(e.target.value)}
-                placeholder="Вставьте текст технического задания..."
-                className="flex min-h-[240px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+                placeholder={t('ai.paste_tz')}
+                className="flex min-h-[180px] sm:min-h-[240px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
               />
-              <div className="flex items-center gap-3 mt-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-4">
                 <button
                   onClick={handleSummarize}
                   disabled={summarizeLoading || !summarizeText.trim()}
-                  className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+                  className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none transition-colors"
                 >
                   {summarizeLoading ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <Sparkles className="h-4 w-4" />
                   )}
-                  Суммаризировать
+                  {t('ai.summarize_btn')}
                 </button>
-                <label className="inline-flex items-center gap-2 rounded-md border px-4 py-2.5 text-sm font-medium hover:bg-accent cursor-pointer transition-colors">
+                <label className="inline-flex items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-medium hover:bg-accent cursor-pointer transition-colors">
                   <Upload className="h-4 w-4" />
-                  Загрузить файл
+                  {t('ai.upload_file')}
                   <input type="file" className="hidden" accept=".txt,.pdf,.doc,.docx" />
                 </label>
               </div>
@@ -320,14 +307,14 @@ export default function AIAssistantPage() {
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="font-semibold flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-violet-500" />
-                    Краткая выжимка
+                    {t('ai.brief_summary')}
                   </h3>
                   <CopyButton text={summarizeResult.summary} />
                 </div>
                 <p className="text-sm text-muted-foreground leading-relaxed mb-4">
                   {summarizeResult.summary}
                 </p>
-                <h4 className="font-medium text-sm mb-2">Ключевые пункты:</h4>
+                <h4 className="font-medium text-sm mb-2">{t('ai.key_points')}:</h4>
                 <ul className="space-y-1.5">
                   {summarizeResult.key_points.map((point, i) => (
                     <li
@@ -348,7 +335,7 @@ export default function AIAssistantPage() {
               <div className="rounded-lg border border-dashed bg-card/50 p-12 text-center">
                 <FileText className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
                 <p className="text-sm text-muted-foreground">
-                  Вставьте ТЗ и нажмите &quot;Суммаризировать&quot;
+                  {t('ai.paste_and_summarize')}
                 </p>
               </div>
             )}
@@ -358,19 +345,19 @@ export default function AIAssistantPage() {
 
       {/* Translate Tab */}
       {activeTab === "translate" && (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-lg border bg-card p-6 space-y-4">
+        <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+          <div className="rounded-lg border bg-card p-4 sm:p-6 space-y-4">
             <h3 className="font-semibold flex items-center gap-2">
               <Languages className="h-4 w-4" />
-              Исходный текст
+              {t('ai.source_text')}
             </h3>
             <textarea
               value={translateText}
               onChange={(e) => setTranslateText(e.target.value)}
-              placeholder="Введите текст для перевода..."
-              className="flex min-h-[180px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+              placeholder={t('ai.enter_translate_text')}
+              className="flex min-h-[140px] sm:min-h-[180px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
             />
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <select
                 value={targetLang}
                 onChange={(e) => setTargetLang(e.target.value)}
@@ -394,12 +381,12 @@ export default function AIAssistantPage() {
                 ) : (
                   <Languages className="h-4 w-4" />
                 )}
-                Перевести
+                {t('ai.translate_btn')}
               </button>
             </div>
           </div>
 
-          <div className="rounded-lg border bg-card p-6">
+          <div className="rounded-lg border bg-card p-4 sm:p-6">
             {translateLoading && (
               <div className="animate-pulse space-y-3">
                 <div className="h-4 bg-muted rounded w-1/4" />
@@ -409,11 +396,11 @@ export default function AIAssistantPage() {
             )}
             {translateResult && (
               <div className="animate-in fade-in duration-300">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold">Перевод</h3>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                  <h3 className="font-semibold">{t('ai.translation')}</h3>
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-muted-foreground">
-                      Определён язык: {translateResult.detected_language}
+                      {t('ai.detected_lang')}: {translateResult.detected_language}
                     </span>
                     <CopyButton text={translateResult.translated_text} />
                   </div>
@@ -427,7 +414,7 @@ export default function AIAssistantPage() {
               <div className="flex flex-col items-center justify-center h-full min-h-[180px] text-center">
                 <Languages className="h-10 w-10 text-muted-foreground/50 mb-3" />
                 <p className="text-sm text-muted-foreground">
-                  Результат перевода появится здесь
+                  {t('ai.translation_placeholder')}
                 </p>
               </div>
             )}
@@ -437,33 +424,33 @@ export default function AIAssistantPage() {
 
       {/* Estimate Tab */}
       {activeTab === "estimate" && (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-lg border bg-card p-6 space-y-4">
+        <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+          <div className="rounded-lg border bg-card p-4 sm:p-6 space-y-4">
             <h3 className="font-semibold flex items-center gap-2">
               <ListChecks className="h-4 w-4" />
-              Описание задачи
+              {t('ai.task_desc')}
             </h3>
             <div className="space-y-3">
               <div>
                 <label className="text-sm font-medium mb-1.5 block">
-                  Название задачи
+                  {t('ai.task_name')}
                 </label>
                 <input
                   value={estimateTitle}
                   onChange={(e) => setEstimateTitle(e.target.value)}
-                  placeholder="Например: Разработка мобильного приложения"
+                  placeholder={t('ai.task_placeholder')}
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <div>
                 <label className="text-sm font-medium mb-1.5 block">
-                  Описание
+                  {t('common.description')}
                 </label>
                 <textarea
                   value={estimateDesc}
                   onChange={(e) => setEstimateDesc(e.target.value)}
-                  placeholder="Опишите задачу подробнее..."
-                  className="flex min-h-[140px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+                  placeholder={t('ai.desc_placeholder')}
+                  className="flex min-h-[100px] sm:min-h-[140px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
                 />
               </div>
             </div>
@@ -477,7 +464,7 @@ export default function AIAssistantPage() {
               ) : (
                 <Brain className="h-4 w-4" />
               )}
-              Оценить сложность
+              {t('ai.estimate_btn')}
             </button>
           </div>
 
@@ -503,33 +490,33 @@ export default function AIAssistantPage() {
               <div className="rounded-lg border bg-card p-6 animate-in fade-in slide-in-from-right-4 duration-300 space-y-4">
                 <h3 className="font-semibold flex items-center gap-2">
                   <Brain className="h-4 w-4 text-violet-500" />
-                  Результат оценки
+                  {t('ai.estimate_result')}
                 </h3>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-lg border p-4">
                     <p className="text-xs text-muted-foreground mb-1">
-                      Сложность
+                      {t('ai.complexity')}
                     </p>
                     <span
                       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${complexityColors[estimateResult.complexity] || ""}`}
                     >
-                      {complexityLabels[estimateResult.complexity] ||
+                      {getComplexityLabels(t)[estimateResult.complexity] ||
                         estimateResult.complexity}
                     </span>
                   </div>
                   <div className="rounded-lg border p-4">
                     <p className="text-xs text-muted-foreground mb-1">
-                      Оценка времени
+                      {t('ai.time_estimate')}
                     </p>
                     <p className="text-lg font-bold">
-                      {estimateResult.estimated_hours}ч
+                      {estimateResult.estimated_hours}{t('ai.hours_suffix')}
                     </p>
                   </div>
                 </div>
 
                 <div>
-                  <h4 className="font-medium text-sm mb-1.5">Обоснование:</h4>
+                  <h4 className="font-medium text-sm mb-1.5">{t('ai.reasoning')}:</h4>
                   <p className="text-sm text-muted-foreground leading-relaxed">
                     {estimateResult.reasoning}
                   </p>
@@ -537,7 +524,7 @@ export default function AIAssistantPage() {
 
                 <div>
                   <h4 className="font-medium text-sm mb-2">
-                    Предложенные подзадачи:
+                    {t('ai.subtasks')}:
                   </h4>
                   <ul className="space-y-1.5">
                     {estimateResult.suggested_subtasks.map((task, i) => (
@@ -553,7 +540,7 @@ export default function AIAssistantPage() {
 
                 <button className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent transition-colors">
                   <ListChecks className="h-4 w-4" />
-                  Создать задачи в проекте
+                  {t('ai.create_tasks_in_project')}
                 </button>
               </div>
             )}
@@ -562,7 +549,7 @@ export default function AIAssistantPage() {
               <div className="rounded-lg border border-dashed bg-card/50 p-12 text-center">
                 <Brain className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
                 <p className="text-sm text-muted-foreground">
-                  Опишите задачу, и AI оценит её сложность
+                  {t('ai.describe_task_hint')}
                 </p>
               </div>
             )}

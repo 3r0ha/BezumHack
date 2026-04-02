@@ -11,6 +11,8 @@ interface SelectContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<HTMLButtonElement>;
+  itemLabels: Map<string, React.ReactNode>;
+  registerItem: (value: string, label: React.ReactNode) => void;
 }
 
 const SelectContext = React.createContext<SelectContextValue>({
@@ -19,6 +21,8 @@ const SelectContext = React.createContext<SelectContextValue>({
   open: false,
   setOpen: () => {},
   triggerRef: { current: null },
+  itemLabels: new Map(),
+  registerItem: () => {},
 });
 
 export interface SelectProps {
@@ -37,7 +41,16 @@ function Select({
   const [internalValue, setInternalValue] = React.useState(defaultValue);
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null!);
+  const itemLabelsRef = React.useRef<Map<string, React.ReactNode>>(new Map());
+  const [, forceUpdate] = React.useState(0);
   const currentValue = value !== undefined ? value : internalValue;
+
+  const registerItem = React.useCallback((itemValue: string, label: React.ReactNode) => {
+    if (itemLabelsRef.current.get(itemValue) !== label) {
+      itemLabelsRef.current.set(itemValue, label);
+      forceUpdate(n => n + 1);
+    }
+  }, []);
 
   const handleValueChange = React.useCallback(
     (newValue: string) => {
@@ -58,6 +71,8 @@ function Select({
         open,
         setOpen,
         triggerRef,
+        itemLabels: itemLabelsRef.current,
+        registerItem,
       }}
     >
       <div className="relative">{children}</div>
@@ -69,7 +84,8 @@ const SelectValue = React.forwardRef<
   HTMLSpanElement,
   React.HTMLAttributes<HTMLSpanElement> & { placeholder?: string }
 >(({ className, placeholder, ...props }, ref) => {
-  const { value } = React.useContext(SelectContext);
+  const { value, itemLabels } = React.useContext(SelectContext);
+  const displayText = value ? (itemLabels.get(value) || value) : placeholder;
 
   return (
     <span
@@ -77,7 +93,7 @@ const SelectValue = React.forwardRef<
       className={cn(!value && "text-muted-foreground", className)}
       {...props}
     >
-      {value || placeholder}
+      {displayText}
     </span>
   );
 });
@@ -151,14 +167,13 @@ const SelectContent = React.forwardRef<
     };
   }, [open, setOpen]);
 
-  if (!open) return null;
-
   return (
     <div
       ref={contentRef}
       className={cn(
         "absolute z-50 mt-1 max-h-60 min-w-[8rem] w-full overflow-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
         "animate-in fade-in-0 zoom-in-95",
+        !open && "hidden",
         className
       )}
       {...props}
@@ -175,6 +190,10 @@ const SelectItem = React.forwardRef<
 >(({ className, children, value, ...props }, ref) => {
   const context = React.useContext(SelectContext);
   const isSelected = context.value === value;
+
+  React.useEffect(() => {
+    context.registerItem(value, children);
+  }, [value, children, context.registerItem]);
 
   return (
     <div

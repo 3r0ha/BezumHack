@@ -5,7 +5,10 @@ import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import Redis from 'ioredis';
 import { messagesRouter } from './routes/messages';
+import { uploadRouter } from './routes/upload';
+import { callsRouter } from './routes/calls';
 import { setupSocket } from './socket';
+import { authMiddleware } from './middleware/auth';
 
 const app = express();
 const server = http.createServer(app);
@@ -45,6 +48,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// JWT auth for all routes except health
+app.use((req, res, next) => {
+  if (req.path === '/health' || req.path.startsWith('/upload/file/')) return next();
+  authMiddleware(req as any, res, next);
+});
+
 // Make io accessible from routes
 app.set('io', io);
 
@@ -55,6 +64,8 @@ app.get('/health', (_req, res) => {
 
 // REST routes
 app.use('/conversations', messagesRouter);
+app.use('/upload', uploadRouter);
+app.use('/calls', callsRouter);
 
 // Socket.IO handlers
 setupSocket(io);

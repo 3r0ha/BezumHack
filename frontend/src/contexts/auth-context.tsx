@@ -46,9 +46,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(storedToken);
 
     api
-      .get<User>("/api/auth/me")
-      .then((userData) => {
-        setUser(userData);
+      .get<{ user: User } | User>("/api/auth/me")
+      .then((data) => {
+        // Handle both { user: ... } and direct user responses
+        const userData = "user" in data ? data.user : data;
+        setUser(userData as User);
       })
       .catch(() => {
         clearAuth();
@@ -58,7 +60,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
   }, [clearAuth]);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string): Promise<User> => {
     const response = await api.post<{ token: string; user: User }>("/api/auth/login", {
       email,
       password,
@@ -67,6 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("token", response.token);
     setToken(response.token);
     setUser(response.user);
+    return response.user;
   }, []);
 
   const register = useCallback(

@@ -125,6 +125,8 @@ router.get('/users/:id', asyncHandler(async (req: Request, res: Response): Promi
       email: true,
       name: true,
       role: true,
+      telegramChatId: true,
+      telegramEnabled: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -169,6 +171,223 @@ router.patch('/users/:id', asyncHandler(async (req: Request, res: Response): Pro
   });
 
   res.json({ user });
+}));
+
+// GET /validate-key — validate API key (for inter-service calls)
+router.get('/validate-key', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const apiKey = req.headers['x-api-key'] as string;
+  if (!apiKey) { res.status(401).json({ error: 'API key required' }); return; }
+
+  const crypto = await import('crypto');
+  const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
+  const key = await prisma.apiKey.findUnique({ where: { keyHash } });
+
+  if (!key) { res.status(401).json({ error: 'Invalid API key' }); return; }
+  if (key.expiresAt && key.expiresAt < new Date()) { res.status(401).json({ error: 'Expired' }); return; }
+
+  const user = await prisma.user.findUnique({
+    where: { id: key.userId },
+    select: { id: true, email: true, name: true, role: true },
+  });
+
+  if (!user) { res.status(401).json({ error: 'User not found' }); return; }
+
+  prisma.apiKey.update({ where: { id: key.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
+
+  res.json({ user });
+}));
+
+// POST /api-keys — create API key
+router.post('/api-keys', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const { name, expiresIn } = req.body;
+  if (!name || typeof name !== 'string' || name.length < 1) {
+    res.status(400).json({ error: 'Name is required' });
+    return;
+  }
+
+  // Generate random key: sk_live_<32 hex chars>
+  const crypto = await import('crypto');
+  const rawKey = 'sk_live_' + crypto.randomBytes(32).toString('hex');
+  const prefix = rawKey.slice(0, 12) + '...';
+  const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+
+  const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 24 * 60 * 60 * 1000) : null;
+
+  const apiKey = await prisma.apiKey.create({
+    data: {
+      userId: req.user!.id,
+      name,
+      keyHash,
+      prefix,
+      expiresAt,
+    },
+  });
+
+  // Return the raw key ONLY on creation (never stored, only hash)
+  res.status(201).json({
+    id: apiKey.id,
+    name: apiKey.name,
+    key: rawKey,
+    prefix: apiKey.prefix,
+    expiresAt: apiKey.expiresAt,
+    createdAt: apiKey.createdAt,
+  });
+}));
+
+// GET /api-keys — list user's API keys
+router.get('/api-keys', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const keys = await prisma.apiKey.findMany({
+    where: { userId: req.user!.id },
+    select: {
+      id: true,
+      name: true,
+      prefix: true,
+      lastUsedAt: true,
+      expiresAt: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json({ keys });
+}));
+
+// DELETE /api-keys/:id — revoke API key
+router.delete('/api-keys/:id', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const key = await prisma.apiKey.findUnique({ where: { id: req.params.id } });
+  if (!key) { res.status(404).json({ error: 'API key not found' }); return; }
+  if (key.userId !== req.user!.id) { res.status(403).json({ error: 'Not your key' }); return; }
+  await prisma.apiKey.delete({ where: { id: req.params.id } });
+  res.status(204).send();
+}));
+
+// POST /invite — manager creates an account for someone
+router.post('/invite', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  // Only managers can invite
+  if (req.user!.role !== 'MANAGER') {
+    res.status(403).json({ error: 'Only managers can invite users' });
+    return;
+  }
+
+  const { email, name, role, password } = req.body;
+  if (!email || !name || !role) {
+    res.status(400).json({ error: 'email, name, and role are required' });
+    return;
+  }
+
+  const validRoles = ['CLIENT', 'DEVELOPER', 'MANAGER'];
+  if (!validRoles.includes(role)) {
+    res.status(400).json({ error: 'Invalid role' });
+    return;
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    res.status(409).json({ error: 'User with this email already exists' });
+    return;
+  }
+
+  // Generate password or use provided
+  const userPassword = password || Math.random().toString(36).slice(-8);
+  const passwordHash = await bcrypt.hash(userPassword, 10);
+
+  const user = await prisma.user.create({
+    data: { email, name, role, passwordHash },
+  });
+
+  res.status(201).json({
+    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    tempPassword: userPassword,
+  });
+}));
+
+// PATCH /users/:id/role — manager changes user role
+router.patch('/users/:id/role', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  if (req.user!.role !== 'MANAGER') {
+    res.status(403).json({ error: 'Only managers can change roles' });
+    return;
+  }
+  const { role } = req.body;
+  if (!role || !['CLIENT', 'DEVELOPER', 'MANAGER'].includes(role)) {
+    res.status(400).json({ error: 'Invalid role' });
+    return;
+  }
+  const user = await prisma.user.update({
+    where: { id: req.params.id },
+    data: { role },
+    select: { id: true, email: true, name: true, role: true },
+  });
+  res.json({ user });
+}));
+
+// DELETE /users/:id — manager deletes user
+router.delete('/users/:id', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  if (req.user!.role !== 'MANAGER') {
+    res.status(403).json({ error: 'Only managers can delete users' });
+    return;
+  }
+  if (req.params.id === req.user!.id) {
+    res.status(400).json({ error: 'Cannot delete yourself' });
+    return;
+  }
+  await prisma.user.delete({ where: { id: req.params.id } });
+  res.status(204).send();
+}));
+
+// POST /change-password
+router.post('/change-password', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    res.status(400).json({ error: 'Current and new password required' });
+    return;
+  }
+  if (newPassword.length < 6) {
+    res.status(400).json({ error: 'New password must be at least 6 characters' });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+
+  const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!valid) {
+    res.status(400).json({ error: 'Current password is incorrect' });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+
+  res.json({ message: 'Password changed successfully' });
+}));
+
+// POST /telegram/link — link Telegram chat ID
+router.post('/telegram/link', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const { chatId } = req.body;
+  if (!chatId) { res.status(400).json({ error: 'chatId required' }); return; }
+
+  await prisma.user.update({
+    where: { id: req.user!.id },
+    data: { telegramChatId: String(chatId), telegramEnabled: true },
+  });
+  res.json({ success: true });
+}));
+
+// POST /telegram/unlink — unlink Telegram
+router.post('/telegram/unlink', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  await prisma.user.update({
+    where: { id: req.user!.id },
+    data: { telegramChatId: null, telegramEnabled: false },
+  });
+  res.json({ success: true });
+}));
+
+// GET /telegram/status — check if linked
+router.get('/telegram/status', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user!.id },
+    select: { telegramChatId: true, telegramEnabled: true },
+  });
+  res.json({ linked: !!user?.telegramChatId, enabled: user?.telegramEnabled || false });
 }));
 
 export default router;

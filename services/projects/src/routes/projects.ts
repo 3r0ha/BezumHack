@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import prisma from "../prisma";
 import { ProjectStatus } from "@prisma/client";
 import { createProjectSchema, updateProjectSchema } from "../validators";
+import { logAudit } from './audit';
 
 export const projectsRouter = Router();
 
@@ -32,6 +33,11 @@ projectsRouter.get("/", asyncHandler(async (req: Request, res: Response): Promis
   const projects = await prisma.project.findMany({
     where,
     orderBy: { createdAt: "desc" },
+    include: {
+      _count: { select: { tasks: true, epochs: true, documents: true, meetings: true } },
+      tasks: { select: { status: true } },
+      epochs: { select: { id: true, title: true, status: true, startDate: true, endDate: true }, orderBy: { startDate: 'asc' }, take: 1 },
+    },
   });
 
   res.json(projects);
@@ -70,8 +76,16 @@ projectsRouter.get("/:id", asyncHandler(async (req: Request, res: Response): Pro
         include: {
           blockedBy: { include: { blockingTask: true } },
           blocks: { include: { blockedTask: true } },
+          documentRefs: { select: { id: true, documentId: true, quote: true } },
+          epoch: { select: { id: true, title: true } },
         },
         orderBy: { createdAt: "asc" },
+      },
+      _count: { select: { epochs: true, documents: true, meetings: true } },
+      epochs: {
+        select: { id: true, title: true, status: true, startDate: true, endDate: true },
+        orderBy: { startDate: 'asc' },
+        take: 3,
       },
     },
   });
@@ -99,13 +113,15 @@ projectsRouter.post("/", asyncHandler(async (req: Request, res: Response): Promi
     },
   });
 
+  logAudit({ userId: (req as any).user?.userId || '', action: 'project.created', entityType: 'project', entityId: project.id, details: { title: project.title } });
+
   res.status(201).json(project);
 }));
 
 // PATCH /:id — update project
 projectsRouter.patch("/:id", asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const parsed = updateProjectSchema.parse(req.body);
-  const { title, description, status, managerId, deadline } = parsed;
+  const { title, description, status, managerId, deadline, hourlyRate } = parsed;
 
   const existing = await prisma.project.findUnique({
     where: { id: req.params.id },
@@ -122,11 +138,14 @@ projectsRouter.patch("/:id", asyncHandler(async (req: Request, res: Response): P
   if (status !== undefined) data.status = status;
   if (managerId !== undefined) data.managerId = managerId;
   if (deadline !== undefined) data.deadline = deadline ? new Date(deadline) : null;
+  if (hourlyRate !== undefined) data.hourlyRate = hourlyRate;
 
   const project = await prisma.project.update({
     where: { id: req.params.id },
     data,
   });
+
+  logAudit({ userId: (req as any).user?.userId || '', action: 'project.updated', entityType: 'project', entityId: project.id, details: data });
 
   res.json(project);
 }));
@@ -145,6 +164,8 @@ projectsRouter.delete("/:id", asyncHandler(async (req: Request, res: Response): 
   await prisma.project.delete({
     where: { id: req.params.id },
   });
+
+  logAudit({ userId: (req as any).user?.userId || '', action: 'project.deleted', entityType: 'project', entityId: req.params.id });
 
   res.status(204).send();
 }));

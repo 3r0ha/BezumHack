@@ -19,6 +19,21 @@ model User {
   passwordHash String
   name         String
   role         Role     @default(CLIENT)
+  telegramChatId String?
+  telegramEnabled Boolean @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  apiKeys      ApiKey[]
+}
+
+model ApiKey {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  keyHash     String   @unique
+  prefix      String
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
 }

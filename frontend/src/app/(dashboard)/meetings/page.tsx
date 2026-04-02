@@ -67,6 +67,8 @@ interface Meeting {
   epoch: { id: string; title: string } | null;
   task: { id: string; title: string; status: string } | null;
   documents: { document: { id: string; title: string } }[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface Project {
@@ -123,6 +125,13 @@ export default function MeetingsPage() {
     if (projects.length > 0) loadMeetings();
   }, [projects, selectedProject]);
 
+  // Auto-refresh every 15s so slot votes from others appear in real time
+  useEffect(() => {
+    if (projects.length === 0) return;
+    const interval = setInterval(() => loadMeetings(), 15000);
+    return () => clearInterval(interval);
+  }, [projects, selectedProject]);
+
   useEffect(() => {
     if (form.projectId) {
       api.get<any[]>(`/api/auth/users`).then(u => setProjectUsers(u || [])).catch(() => {});
@@ -152,7 +161,9 @@ export default function MeetingsPage() {
       setMeetings(all.sort((a, b) => {
         if (a.status === "SCHEDULING" && b.status !== "SCHEDULING") return -1;
         if (b.status === "SCHEDULING" && a.status !== "SCHEDULING") return 1;
-        return (b.scheduledAt || b.createdAt || "") > (a.scheduledAt || a.createdAt || "") ? 1 : -1;
+        const aTime = a.scheduledAt || a.createdAt;
+        const bTime = b.scheduledAt || b.createdAt;
+        return new Date(aTime).getTime() - new Date(bTime).getTime();
       }));
     } finally { setLoading(false); }
   }
@@ -384,34 +395,69 @@ export default function MeetingsPage() {
 
               {/* Slot voting */}
               {detailOpen.status === "SCHEDULING" && detailOpen.slots.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-semibold">Проголосуйте за удобное время</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Система автоматически выберет слот, когда все участники проголосуют
-                  </p>
-                  <div className="space-y-2">
-                    {detailOpen.slots.map(slot => {
-                      const hasVoted = slot.votes.includes(user?.id || "");
-                      const totalParticipants = detailOpen.participants.length;
-                      const voteCount = slot.votes.length;
-                      return (
-                        <div key={slot.id} className={`border rounded-lg p-3 flex items-center gap-3 ${hasVoted ? "border-primary bg-primary/5" : ""}`}>
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">{formatSlotTime(slot.startTime, slot.endTime)}</p>
-                            <p className="text-xs text-muted-foreground">{voteCount} / {totalParticipants} проголосовали</p>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant={hasVoted ? "default" : "outline"}
-                            onClick={() => handleVote(detailOpen.id, slot.id)}
-                          >
-                            <ThumbsUp className="h-4 w-4 mr-1" />
-                            {hasVoted ? "Выбрано" : "Выбрать"}
-                          </Button>
-                        </div>
-                      );
-                    })}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold">Проголосуйте за удобное время</h3>
+                    <span className="text-xs text-muted-foreground">
+                      {detailOpen.slots.reduce((max, s) => Math.max(max, s.votes.length), 0)} / {detailOpen.participants.length} голосов
+                    </span>
                   </div>
+                  <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-500"
+                      style={{
+                        width: `${detailOpen.participants.length > 0
+                          ? (detailOpen.slots.reduce((max, s) => Math.max(max, s.votes.length), 0) / detailOpen.participants.length) * 100
+                          : 0}%`
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    {(() => {
+                      const maxVotes = Math.max(...detailOpen.slots.map(s => s.votes.length));
+                      return detailOpen.slots.map(slot => {
+                        const hasVoted = slot.votes.includes(user?.id || "");
+                        const totalParticipants = detailOpen.participants.length;
+                        const voteCount = slot.votes.length;
+                        const isBest = voteCount === maxVotes && voteCount > 0;
+                        return (
+                          <div key={slot.id} className={`border rounded-lg p-3 flex items-center gap-3 transition-colors ${
+                            hasVoted ? "border-primary bg-primary/5" : isBest ? "border-emerald-500/40 bg-emerald-500/5" : ""
+                          }`}>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-medium">{formatSlotTime(slot.startTime, slot.endTime)}</p>
+                                {isBest && voteCount > 0 && (
+                                  <span className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">
+                                    Лидирует
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 mt-1">
+                                <div className="flex gap-0.5">
+                                  {Array.from({ length: totalParticipants }).map((_, i) => (
+                                    <div key={i} className={`h-1.5 w-1.5 rounded-full ${i < voteCount ? "bg-primary" : "bg-muted"}`} />
+                                  ))}
+                                </div>
+                                <p className="text-xs text-muted-foreground">{voteCount} / {totalParticipants}</p>
+                              </div>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant={hasVoted ? "default" : "outline"}
+                              onClick={() => handleVote(detailOpen.id, slot.id)}
+                            >
+                              <ThumbsUp className="h-4 w-4 mr-1" />
+                              {hasVoted ? "Выбрано" : "Выбрать"}
+                            </Button>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Система автоматически назначит встречу на слот с наибольшим числом голосов
+                  </p>
                 </div>
               )}
 

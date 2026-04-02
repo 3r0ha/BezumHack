@@ -8,12 +8,12 @@ generator client {
 }
 
 model Conversation {
-  id          String    @id @default(uuid())
-  projectId   String
-  title       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  messages    Message[]
+  id           String                    @id @default(uuid())
+  projectId    String
+  title        String?
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  messages     Message[]
   participants ConversationParticipant[]
 }
 
@@ -35,5 +35,21 @@ model Message {
   senderId          String
   content           String
   translatedContent String?
+  fileName          String?
+  fileUrl           String?
+  fileType          String?
+  fileSize          Int?
   createdAt         DateTime     @default(now())
+}
+
+model Call {
+  id             String    @id @default(uuid())
+  conversationId String?
+  initiatorId    String
+  type           String    @default("video")
+  status         String    @default("ringing")
+  participants   String[]
+  startedAt      DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime  @default(now())
 }

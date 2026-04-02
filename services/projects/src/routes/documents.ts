@@ -185,6 +185,29 @@ documentsRouter.patch("/:id", asyncHandler(async (req, res) => {
     }
   }
 
+  // Auto-link tasks mentioned in document content
+  if (content) {
+    try {
+      // Find task references: patterns like TASK-uuid
+      const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
+      const taskRefRegex = /TASK-([a-f0-9-]{36})/gi;
+      const taskRefs = [...contentStr.matchAll(taskRefRegex)].map((m: RegExpMatchArray) => m[1]);
+
+      for (const taskId of taskRefs) {
+        // Check task exists
+        const taskExists = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true } });
+        if (taskExists) {
+          // Create link if not exists
+          await prisma.taskDocumentRef.upsert({
+            where: { taskId_documentId: { taskId, documentId: req.params.id } },
+            create: { taskId, documentId: req.params.id, quote: 'Автоматическая привязка по упоминанию' },
+            update: {},
+          });
+        }
+      }
+    } catch {}
+  }
+
   res.json({ ...doc, currentVersion: newVersionNumber });
 }));
 

@@ -66,6 +66,11 @@ interface Task {
   priority: string;
   assignee: string | null;
   depends_on: string[];
+  prStatus: string | null;
+  gitBranch: string | null;
+  prNumber: number | null;
+  documentRefs: { id: string; documentId: string; quote: string | null }[];
+  epoch: { id: string; title: string } | null;
 }
 
 interface Project {
@@ -273,7 +278,7 @@ function TaskCard({
       )}
 
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <Badge
             variant="outline"
             className={`text-[10px] px-1.5 py-0 h-5 font-medium ${priority.className}`}
@@ -290,6 +295,41 @@ function TaskCard({
               <TooltipContent>
                 <p>{t('tasks.blocked')}: {blocked.map((b) => b.title).join(", ")}</p>
               </TooltipContent>
+            </Tooltip>
+          )}
+          {task.prStatus && (
+            <Badge
+              variant="outline"
+              className={`text-[10px] px-1.5 py-0 h-5 gap-1 ${
+                task.prStatus === "MERGED" ? "bg-purple-500/15 text-purple-700 dark:text-purple-400 border-purple-500/20" :
+                task.prStatus === "OPEN" ? "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/20" :
+                "bg-muted text-muted-foreground"
+              }`}
+            >
+              <GitBranch className="h-2.5 w-2.5" />
+              {task.prStatus === "MERGED" ? "Merged" : task.prStatus === "OPEN" ? "PR Open" : task.prStatus}
+            </Badge>
+          )}
+          {task.documentRefs && task.documentRefs.length > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 gap-1 bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20">
+                  <FileText className="h-2.5 w-2.5" />
+                  {task.documentRefs.length}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent><p>Документов: {task.documentRefs.length}</p></TooltipContent>
+            </Tooltip>
+          )}
+          {task.epoch && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 gap-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20">
+                  <Layers className="h-2.5 w-2.5" />
+                  {task.epoch.title.length > 10 ? task.epoch.title.slice(0, 10) + "…" : task.epoch.title}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent><p>Спринт: {task.epoch.title}</p></TooltipContent>
             </Tooltip>
           )}
         </div>
@@ -733,6 +773,8 @@ function TaskEditDialog({
   const [editPriority, setEditPriority] = useState("medium");
   const [editStatus, setEditStatus] = useState("backlog");
   const [editAssignee, setEditAssignee] = useState("");
+  const [editBranch, setEditBranch] = useState("");
+  const [editPrNumber, setEditPrNumber] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -742,6 +784,8 @@ function TaskEditDialog({
       setEditPriority(task.priority);
       setEditStatus(task.status);
       setEditAssignee(task.assignee || "");
+      setEditBranch(task.gitBranch || "");
+      setEditPrNumber(task.prNumber ? String(task.prNumber) : "");
     }
   }, [task]);
 
@@ -755,6 +799,8 @@ function TaskEditDialog({
         priority: editPriority.toUpperCase(),
         status: editStatus.toUpperCase(),
         assigneeId: editAssignee || null,
+        gitBranch: editBranch || null,
+        prNumber: editPrNumber ? parseInt(editPrNumber) : null,
       });
       onSave({
         ...task,
@@ -763,6 +809,8 @@ function TaskEditDialog({
         priority: editPriority,
         status: editStatus,
         assignee: editAssignee || null,
+        gitBranch: editBranch || null,
+        prNumber: editPrNumber ? parseInt(editPrNumber) : null,
       });
     } catch (err) {
       toast({ title: t('common.error'), description: err instanceof Error ? err.message : t('projects.task_save_error'), variant: "destructive" });
@@ -854,6 +902,73 @@ function TaskEditDialog({
                   </SelectContent>
                 </Select>
               </div>
+
+              <Separator />
+              <div className="space-y-3">
+                <Label className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <GitBranch className="h-3.5 w-3.5" />
+                  CI/CD интеграция
+                </Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-branch" className="text-xs">Git ветка</Label>
+                    <Input
+                      id="edit-branch"
+                      value={editBranch}
+                      onChange={(e) => setEditBranch(e.target.value)}
+                      placeholder="feature/my-branch"
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-pr" className="text-xs">Номер PR/MR</Label>
+                    <Input
+                      id="edit-pr"
+                      type="number"
+                      value={editPrNumber}
+                      onChange={(e) => setEditPrNumber(e.target.value)}
+                      placeholder="123"
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                </div>
+                {task.prStatus && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="text-muted-foreground text-xs">Статус PR:</span>
+                    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 h-5 ${
+                      task.prStatus === "MERGED" ? "bg-purple-500/15 text-purple-700 border-purple-500/20" :
+                      task.prStatus === "OPEN" ? "bg-blue-500/15 text-blue-700 border-blue-500/20" :
+                      "bg-muted text-muted-foreground"
+                    }`}>
+                      {task.prStatus}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">обновляется автоматически через webhook</span>
+                  </div>
+                )}
+              </div>
+
+              {task.documentRefs && task.documentRefs.length > 0 && (
+                <>
+                  <Separator />
+                  <div>
+                    <Label className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <FileText className="h-3.5 w-3.5" />
+                      Связанные документы ({task.documentRefs.length})
+                    </Label>
+                    <div className="mt-2 space-y-1">
+                      {task.documentRefs.map((ref) => (
+                        <div key={ref.id} className="flex items-start gap-2 text-sm p-2 bg-muted/50 rounded">
+                          <FileText className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                          <div className="min-w-0">
+                            <span className="text-xs text-muted-foreground">{ref.documentId.slice(0, 8)}…</span>
+                            {ref.quote && <p className="text-xs italic text-muted-foreground mt-0.5 line-clamp-1">«{ref.quote}»</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {task.depends_on.length > 0 && (
                 <>
@@ -1143,6 +1258,11 @@ export default function ProjectDetailPage() {
               priority: (t.priority || "MEDIUM").toLowerCase(),
               assignee: t.assigneeId || null,
               depends_on: (t.blockedBy || []).map((d: any) => d.blockingTaskId),
+              prStatus: t.prStatus || null,
+              gitBranch: t.gitBranch || null,
+              prNumber: t.prNumber || null,
+              documentRefs: t.documentRefs || [],
+              epoch: t.epoch || null,
             })),
           });
         } else {
@@ -1185,6 +1305,11 @@ export default function ProjectDetailPage() {
             priority: (result.priority || newPriority).toLowerCase(),
             assignee: result.assigneeId || newAssignee || null,
             depends_on: (result.blockedBy || []).map((d: any) => d.blockingTaskId || d),
+            prStatus: null,
+            gitBranch: null,
+            prNumber: null,
+            documentRefs: [],
+            epoch: null,
           },
         ],
       });

@@ -14,6 +14,7 @@ export const updateProjectSchema = z.object({
   status: z.enum(['DRAFT', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED']).optional(),
   managerId: z.string().uuid('Invalid managerId format').nullable().optional(),
   deadline: z.string().datetime({ offset: true }).nullable().optional().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/).nullable().optional()),
+  hourlyRate: z.number().min(0).nullable().optional(),
 });
 
 export const createTaskSchema = z.object({
@@ -41,3 +42,34 @@ export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
+
+// Comment validators
+export const createCommentSchema = z.object({
+  content: z.string().min(1, 'Content is required'),
+  taskId: z.string().uuid(),
+});
+
+// Time entry validators
+export const startTimerSchema = z.object({
+  taskId: z.string().uuid(),
+  note: z.string().optional(),
+});
+
+export const manualEntrySchema = z.object({
+  taskId: z.string().uuid(),
+  hours: z.number().positive(),
+  note: z.string().optional(),
+  startedAt: z.string().datetime().optional(),
+});
+
+// Approval validators
+export const createApprovalSchema = z.object({
+  projectId: z.string().uuid(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+});
+
+export const reviewApprovalSchema = z.object({
+  status: z.enum(['APPROVED', 'REJECTED']),
+  reviewComment: z.string().optional(),
+});

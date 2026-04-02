@@ -6,8 +6,8 @@ import { Providers } from "./providers";
 const inter = Inter({ subsets: ["latin", "cyrillic"] });
 
 export const metadata: Metadata = {
-  title: "DevSync",
-  description: "Платформа для студий разработки",
+  title: "Envelope",
+  description: "Внутренняя платформа студии разработки",
 };
 
 export default function RootLayout({
