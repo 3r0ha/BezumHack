@@ -114,7 +114,7 @@ const billingStatusLabelKeys: Record<string, string> = {
   CANCELLED: 'billing.status.cancelled',
 };
 
-function formatCurrency(amount: number): string {
+function _formatCurrency(amount: number, locale: string = "ru"): string {
   return new Intl.NumberFormat(locale === "en" ? "en-US" : "ru-RU", {
     style: "currency",
     currency: "RUB",
@@ -123,7 +123,7 @@ function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-function formatDate(dateStr: string | null, locale: string = "ru"): string {
+function _formatDate(dateStr: string | null, locale: string = "ru"): string {
   if (!dateStr) return "--";
   try {
     return new Date(dateStr).toLocaleDateString(locale === "en" ? "en-US" : "ru-RU", {
@@ -140,7 +140,9 @@ function formatDate(dateStr: string | null, locale: string = "ru"): string {
 
 export default function BillingPage() {
   const { getUserName } = useUsers();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const formatCurrency = (amount: number) => _formatCurrency(amount, locale);
+  const formatDate = (dateStr: string | null) => _formatDate(dateStr, locale);
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);

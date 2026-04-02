@@ -47,6 +47,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/components/ui/use-toast";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { useLocale } from "@/contexts/locale-context";
@@ -198,7 +199,7 @@ export default function ChatPage() {
       );
       if (data) setConversations(data);
     } catch {
-      // keep empty state
+      toast({ title: "Error", description: "Failed to load conversations", variant: "destructive" });
     }
     setLoading(false);
   }, [user?.id]);

@@ -23,6 +23,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { useLocale } from "@/contexts/locale-context";
+import { toast } from "@/components/ui/use-toast";
 import { io as socketIo } from "socket.io-client";
 import { useUsers } from "@/hooks/use-users";
 
@@ -196,9 +197,11 @@ export default function CallPage() {
         try {
           stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
           setIsCameraOff(true);
+          toast({ title: t("call.camera_unavailable") || "Camera unavailable", description: t("call.audio_only") || "Continuing with audio only" });
         } catch {
           setIsCameraOff(true);
           setIsMuted(true);
+          toast({ title: t("call.media_unavailable") || "Media unavailable", description: t("call.no_devices") || "No camera or microphone found", variant: "destructive" });
         }
       }
 

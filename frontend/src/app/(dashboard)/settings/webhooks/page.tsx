@@ -79,7 +79,7 @@ const ALL_EVENTS = Object.keys(EVENT_LABEL_KEYS);
 
 // --- Helpers ---
 
-function formatDate(dateStr: string): string {
+function _formatDate(dateStr: string, locale: string = "ru"): string {
   try {
     return new Date(dateStr).toLocaleDateString(locale === "en" ? "en-US" : "ru-RU", {
       day: "numeric",
@@ -93,7 +93,7 @@ function formatDate(dateStr: string): string {
   }
 }
 
-function formatRelativeDate(dateStr: string, t: (key: string) => string): string {
+function _formatRelativeDate(dateStr: string, t: (key: string) => string, locale: string = "ru"): string {
   try {
     const date = new Date(dateStr);
     const now = new Date();
@@ -116,7 +116,9 @@ function formatRelativeDate(dateStr: string, t: (key: string) => string): string
 // --- Component ---
 
 export default function WebhooksPage() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const formatDate = (dateStr: string) => _formatDate(dateStr, locale);
+  const formatRelativeDate = (dateStr: string) => _formatRelativeDate(dateStr, t, locale);
   const [loading, setLoading] = useState(true);
   const [webhooks, setWebhooks] = useState<WebhookData[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -540,7 +542,7 @@ export default function WebhooksPage() {
                   <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-muted-foreground">
                     {webhook.lastTriggeredAt && (
                       <span>
-                        {t('webhooks.last_triggered')}: {formatRelativeDate(webhook.lastTriggeredAt, t)}
+                        {t('webhooks.last_triggered')}: {formatRelativeDate(webhook.lastTriggeredAt)}
                       </span>
                     )}
                     {webhook.lastError && (

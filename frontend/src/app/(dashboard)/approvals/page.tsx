@@ -99,7 +99,7 @@ const statusLabelKeys: Record<string, string> = {
   REJECTED: 'approvals.rejected',
 };
 
-function formatDate(dateStr: string): string {
+function _formatDate(dateStr: string, locale: string = "ru"): string {
   try {
     return new Date(dateStr).toLocaleDateString(locale === "en" ? "en-US" : "ru-RU", {
       day: "numeric",
@@ -111,7 +111,7 @@ function formatDate(dateStr: string): string {
   }
 }
 
-function formatRelativeDate(dateStr: string, t: (key: string) => string): string {
+function _formatRelativeDate(dateStr: string, t: (key: string) => string, locale: string = "ru"): string {
   try {
     const date = new Date(dateStr);
     const now = new Date();
@@ -133,7 +133,9 @@ function formatRelativeDate(dateStr: string, t: (key: string) => string): string
 
 export default function ApprovalsPage() {
   const { getUserName } = useUsers();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const formatDate = (dateStr: string) => _formatDate(dateStr, locale);
+  const formatRelativeDate = (dateStr: string) => _formatRelativeDate(dateStr, t, locale);
   const [loading, setLoading] = useState(true);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -484,7 +486,7 @@ export default function ApprovalsPage() {
                       </CardContent>
                       <CardFooter className="pt-3 border-t flex items-center justify-between">
                         <span className="text-xs text-muted-foreground">
-                          {formatRelativeDate(approval.createdAt, t)}
+                          {formatRelativeDate(approval.createdAt)}
                         </span>
                         <Button
                           size="sm"
@@ -557,7 +559,7 @@ export default function ApprovalsPage() {
                   </CardContent>
                   <CardFooter className="pt-3 border-t flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">
-                      {formatRelativeDate(approval.createdAt, t)}
+                      {formatRelativeDate(approval.createdAt)}
                     </span>
                     {approval.status === "PENDING" ? (
                       <Button
